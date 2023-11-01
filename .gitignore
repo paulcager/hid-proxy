@@ -1,0 +1,7 @@
+build/
+build.old/
+cmake-build-debug/
+.idea
+.uuid
+pico-debug.cfg
+rp2040.cfg
