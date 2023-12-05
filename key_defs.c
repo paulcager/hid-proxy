@@ -188,6 +188,8 @@ void start_define(uint8_t key0) {
             memmove(ptr, next, limit - next);
             continue;
         }
+
+        ptr = next;
     }
 
     if (kb.key_being_defined == NULL) {
