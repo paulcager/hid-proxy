@@ -30,6 +30,7 @@
 
 #include "pico.h"
 #include <pico/flash.h>
+#include <hardware/spi.h>
 #include "pico/stdlib.h"
 #include "pico/util/queue.h"
 #include "pico/multicore.h"
@@ -39,6 +40,8 @@
 #include "usb_descriptors.h"
 
 #include "hid_proxy.h"
+#include "pn532-lib/pn532_rp2040.h"
+
 
 // Reminders:
 // Latest is ~/pico/hid-proxy2/build
@@ -111,6 +114,8 @@ void core1_loop() {
     }
 }
 
+extern void try_nfc();
+
 // core0: handle device events
 int main(void) {
     // default 125MHz is not appropriate. Sysclock should be multiple of 12MHz.
@@ -128,6 +133,52 @@ int main(void) {
     kb.status = locked;
 
     LOG_INFO("Core 0 (tud) running\n");
+
+    spi_init(spi0, 1000000);
+    spi_set_format(spi0, 8, SPI_CPOL_1, SPI_CPHA_1, SPI_MSB_FIRST);
+    gpio_set_function(PICO_DEFAULT_SPI_RX_PIN, GPIO_FUNC_SPI);
+    gpio_set_function(PICO_DEFAULT_SPI_TX_PIN, GPIO_FUNC_SPI);
+    gpio_set_function(PICO_DEFAULT_SPI_SCK_PIN, GPIO_FUNC_SPI);
+    gpio_init(PICO_DEFAULT_SPI_CSN_PIN);
+    gpio_set_dir(PICO_DEFAULT_SPI_CSN_PIN, GPIO_OUT);
+    gpio_put(PICO_DEFAULT_SPI_CSN_PIN, 1);
+
+    sleep_ms(2000);
+
+    try_nfc();
+    sleep_ms(30000);
+
+    PN532 pn532;
+    PN532_SPI_Init(&pn532);
+
+    uint8_t version[4];
+    memset(version, 0, 4);
+    int ret = PN532_GetFirmwareVersion(&pn532, version);
+    printf("PN532_GetFirmwareVersion returned %d: %d %d %d %d\n", ret, version[0], version[1], version[2], version[3]);
+
+    if (ret == 0) {
+        uint8_t uid[64];
+        memset(uid, 0, 64);
+        int uid_len = PN532_ReadPassiveTarget(&pn532, uid, 0, 5000);
+        printf("PN532_ReadPassiveTarget returns %d\n", uid_len);
+        hex_dump(uid, 7);
+        if (uid_len > 0) {
+            printf("Target gives\t");
+            hex_dump(uid, uid_len);
+
+            uint8_t keya[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+            ret = PN532_MifareClassicAuthenticateBlock(&pn532, uid, uid_len, 4, 0, keya);
+            printf("Ret from auth: %d\n", ret);
+
+            uint8_t data[16];
+            memset(data, 0x42, 16);
+            hex_dump(data, 16);
+
+            ret = PN532_MifareClassicReadBlock(&pn532, data, 4);
+            printf("Read gives %d:\t", ret);
+            hex_dump(data, 16);
+        }
+    }
 
     multicore_reset_core1();
     // all USB task run in core1

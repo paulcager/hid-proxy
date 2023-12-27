@@ -6,6 +6,7 @@ project(hid_proxy)
 pico_sdk_init()
 
 add_subdirectory("./Pico-PIO-USB" pico_pio_usb)
+add_subdirectory("./pico-arduino-compat/libs/adafruit-pn532")
 
 add_executable(hid_proxy
         hid_proxy.c
@@ -16,7 +17,12 @@ add_executable(hid_proxy
         encryption.c
         encryption.h
         tiny-AES-c/aes.c
-        sane.c)
+        # Adafruit-PN532/Adafruit_PN532.cpp
+        sane.c
+        nfc_tag.cpp
+        nfc_tag.h
+        pn532-lib/pn532.c
+        pn532-lib/pn532_rp2040.c)
 
 target_sources(hid_proxy PUBLIC
         ${CMAKE_CURRENT_LIST_DIR}/hid_proxy
@@ -40,7 +46,9 @@ target_link_libraries(hid_proxy PUBLIC
         pico_pio_usb
         tinyusb_device
         tinyusb_board
-        tinyusb_host)
+        tinyusb_host
+        pac-adafruit-pn532
+)
 
 pico_add_extra_outputs(hid_proxy)
 

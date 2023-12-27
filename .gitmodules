@@ -4,3 +4,12 @@
 [submodule "tiny-AES-c"]
 	path = tiny-AES-c
 	url = https://github.com/kokke/tiny-AES-c.git
+[submodule "Adafruit-PN532"]
+	path = Adafruit-PN532
+	url = git@github.com:adafruit/Adafruit-PN532.git
+[submodule "pn532-lib"]
+	path = pn532-lib
+	url = git@github.com:paulcager/pn532-lib.git
+[submodule "pico-arduino-compat"]
+	path = pico-arduino-compat
+	url = git@github.com:kholia/pico-arduino-compat.git
