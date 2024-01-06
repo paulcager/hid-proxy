@@ -17,12 +17,11 @@ add_executable(hid_proxy
         encryption.c
         encryption.h
         tiny-AES-c/aes.c
-        # Adafruit-PN532/Adafruit_PN532.cpp
         sane.c
-        nfc_tag.cpp
-        nfc_tag.h
-        pn532-lib/pn532.c
-        pn532-lib/pn532_rp2040.c)
+#        nfc_tag
+        tinycrypt/lib/source/sha256.c
+        tinycrypt/lib/source/utils.c
+)
 
 target_sources(hid_proxy PUBLIC
         ${CMAKE_CURRENT_LIST_DIR}/hid_proxy
@@ -35,7 +34,9 @@ target_sources(hid_proxy PUBLIC
 
 # Make sure TinyUSB can find tusb_config.h
 target_include_directories(hid_proxy PUBLIC
-        ${CMAKE_CURRENT_LIST_DIR})
+        ${CMAKE_CURRENT_LIST_DIR}
+        tinycrypt/lib/include
+)
 
 target_link_libraries(hid_proxy PUBLIC
         pico_stdlib

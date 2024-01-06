@@ -1,5 +1,6 @@
 #include "hid_proxy.h"
 #include"usb_descriptors.h"
+#include "encryption.h"
 
 static hid_keyboard_report_t release_all_keys = {0, 0, {0, 0, 0, 0, 0, 0}};
 
@@ -44,8 +45,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
 
                 case HID_KEY_ENTER:
                     kb.status = entering_password;
-                    kb.encryption_key_len = 0;
-                    memset(kb.encryption_key, 0, 16);
+                    enc_start_key_derivation();
                     printf("Enter password\n");
                     return;
 
@@ -67,9 +67,9 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
             }
 
             if (key0 != HID_KEY_ENTER) {
-                // TODO- overflow, KDFs etc. Assume won't be necessary when have NFC.
-                kb.encryption_key[kb.encryption_key_len++] = key0;
+                enc_add_key_derivation_byte(key0);
             } else {
+                enc_end_key_derivation();
                 if (kb.status == entering_password) {
                     read_state(&kb);
                 } else {
@@ -117,8 +117,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
 
                 case HID_KEY_ENTER:
                     kb.status = entering_new_password;
-                    kb.encryption_key_len = 0;
-                    memset(kb.encryption_key, 0, 16);
+                    enc_start_key_derivation();
                     printf("Enter password\n");
                     return;
 

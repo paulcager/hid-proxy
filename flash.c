@@ -63,8 +63,7 @@ void init_state(kb_t *kb) {
     // "Format" with an empty key.
     memset(kb->local_store, 0, FLASH_STORE_SIZE);
     memcpy(kb->local_store->magic, FLASH_STORE_MAGIC, sizeof(kb->local_store->magic));
-    kb->encryption_key_len = 0;
-    memset(kb->encryption_key, 0, 16);
+    enc_clear_key();
 
     save_state(kb);
 

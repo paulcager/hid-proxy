@@ -96,10 +96,6 @@ typedef struct {
 typedef struct {
     status_t status;
     store_t *local_store;
-    // TODO - overflow.
-    // TODO - will be replaced by 16 bytes of pure entropy when link to card.
-    uint8_t encryption_key[16];
-    uint8_t encryption_key_len;
     keydef_t *key_being_defined;
     uint8_t key_being_replayed;
     keydef_t *next_to_replay;
