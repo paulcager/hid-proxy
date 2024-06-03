@@ -1,3 +1,5 @@
+#include <pico/multicore.h>
+#include <pico/bootrom.h>
 #include "hid_proxy.h"
 #include"usb_descriptors.h"
 #include "encryption.h"
@@ -23,6 +25,14 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
 #endif
 
     uint8_t key0 = kb_report->keycode[0];
+
+    // No matter what state we are in "double-shift + Pause" means reboot into upload mode.
+    if (kb_report->modifier == 0x22 && key0 == HID_KEY_PAUSE) {
+        multicore_reset_core1();
+        reset_usb_boot(0,0);
+        return;
+    }
+
     switch (kb.status) {
 
         case locked:

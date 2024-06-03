@@ -41,6 +41,7 @@
 
 #include "hid_proxy.h"
 #include "pn532-lib/pn532_rp2040.h"
+#include "nfc_tag.h"
 
 
 // Reminders:
@@ -54,7 +55,7 @@
 //--------------------------------------------------------------------+
 
 
-#define MAX_REPORT  4
+#define MAX_REPORT  2
 static struct {
     uint8_t report_count;
     tuh_hid_report_info_t report_info[MAX_REPORT];
@@ -88,8 +89,9 @@ void core1_main() {
 
     // Use tuh_configure() to pass pio configuration to the host stack
     // Note: tuh_configure() must be called before
+
     pio_usb_configuration_t pio_cfg = PIO_USB_DEFAULT_CONFIG;
-    // Use GPIO2/3 for USB, leaving 0/1 available for UARTif needed.
+    // Use GPIO2/3 for USB, leaving 0/1 available for UART if needed.
     pio_cfg.pin_dp = 2;
     LOG_INFO("pio_cfg.pin_dp = %d\n", pio_cfg.pin_dp);
     tuh_configure(1, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &pio_cfg);
@@ -100,7 +102,6 @@ void core1_main() {
     }
 
     LOG_INFO("tuh running\n");
-
     core1_loop();
 }
 
@@ -113,8 +114,6 @@ void core1_loop() {
         }
     }
 }
-
-extern void try_nfc();
 
 // core0: handle device events
 int main(void) {
@@ -134,6 +133,8 @@ int main(void) {
 
     LOG_INFO("Core 0 (tud) running\n");
 
+    nfc_setup();
+
     multicore_reset_core1();
     // all USB task run in core1
     multicore_launch_core1(core1_main);
@@ -144,6 +145,7 @@ int main(void) {
     absolute_time_t last_interaction = get_absolute_time();
     status_t previous_status = locked;
 
+
     while (true) {
         if (kb.status != previous_status) {
             LOG_INFO("State changed from %s to %s\n", status_string(previous_status), status_string(kb.status));
@@ -151,6 +153,7 @@ int main(void) {
         }
 
         tud_task(); // tinyusb device task
+        nfc_task();
 
         hid_report_t report;
         // Anything sent to us from the keyboard process (PIO on core1)?

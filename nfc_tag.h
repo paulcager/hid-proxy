@@ -5,6 +5,7 @@
 #ifndef HID_PROXY_NFC_TAG_H
 #define HID_PROXY_NFC_TAG_H
 
-extern "C" void try_nfc();
+void nfc_setup();
+void nfc_task();
 
 #endif //HID_PROXY_NFC_TAG_H
