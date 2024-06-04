@@ -16,7 +16,18 @@
 
 static struct tc_sha256_state_struct sha256;
 
-static uint8_t key[32];
+static uint8_t key[32];     // Allow for a 32-byte SHA digest, but AES will only use the first 16 bytes as a key.
+
+void enc_set_key(uint8_t *data, size_t length) {
+    assert(length <= sizeof(key));
+    memset(key, 0, sizeof(key));
+    memcpy(key, data, length);
+}
+
+void enc_get_key(uint8_t *data, size_t length) {
+    assert(length <= sizeof(key));
+    memcpy(data, key, length);
+}
 
 void enc_clear_key() {
     memset(key, 0, sizeof key);

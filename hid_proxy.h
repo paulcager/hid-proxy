@@ -19,7 +19,7 @@
 
 // The number of seconds without any keyboard input after which we'll
 // clear the plain-text storage, requiring re-input of the passphrase.
-#define IDLE_TIMEOUT_MILLIS (30 * 60 * 1000)
+#define IDLE_TIMEOUT_MILLIS (1 * 60 * 1000)
 
 union hid_reports {
     hid_keyboard_report_t kb;

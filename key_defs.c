@@ -3,6 +3,7 @@
 #include "hid_proxy.h"
 #include"usb_descriptors.h"
 #include "encryption.h"
+#include "nfc_tag.h"
 
 static hid_keyboard_report_t release_all_keys = {0, 0, {0, 0, 0, 0, 0, 0}};
 
@@ -111,6 +112,15 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
             switch (key0) {
                 case 0:
                     return;
+
+                case HID_KEY_PRINT_SCREEN:
+                {
+                    uint8_t key[16];
+                    enc_get_key(key, sizeof(key));
+                    nfc_write_key(key, sizeof(key), 30 * 1000);
+                    kb.status = normal;
+                    return;
+                }
 
                 case HID_KEY_ESCAPE:
                     kb.status = normal;

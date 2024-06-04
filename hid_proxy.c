@@ -42,6 +42,7 @@
 #include "hid_proxy.h"
 #include "pn532-lib/pn532_rp2040.h"
 #include "nfc_tag.h"
+#include "encryption.h"
 
 
 // Reminders:
@@ -131,7 +132,7 @@ int main(void) {
     kb.local_store = malloc(FLASH_STORE_SIZE);
     kb.status = locked;
 
-    LOG_INFO("Core 0 (tud) running\n");
+    LOG_INFO("\n\nCore 0 (tud) running\n");
 
     nfc_setup();
 
@@ -153,7 +154,7 @@ int main(void) {
         }
 
         tud_task(); // tinyusb device task
-        nfc_task();
+        nfc_task(kb.status == locked);
 
         hid_report_t report;
         // Anything sent to us from the keyboard process (PIO on core1)?
@@ -167,6 +168,17 @@ int main(void) {
         send_data_t to_send;
         if (!kb.send_to_host_in_progress && queue_try_remove(&tud_to_physical_host_queue, &to_send)) {
             send_report_to_host(to_send);
+        }
+
+        if (kb.status == locked) {
+            if (nfc_key_available()) {
+                uint8_t key[16];
+                nfc_get_key(key);
+                printf("Setting key\n");
+                hex_dump(key, 16);
+                enc_set_key(key, sizeof(key));
+                read_state(&kb);
+            }
         }
 
         if (kb.status != locked && absolute_time_diff_us(last_interaction, get_absolute_time()) > 1000 * IDLE_TIMEOUT_MILLIS) {
