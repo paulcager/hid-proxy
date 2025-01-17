@@ -130,7 +130,7 @@ int main(void) {
     queue_init(&leds_queue, 1, 4);
 
     kb.local_store = malloc(FLASH_STORE_SIZE);
-    kb.status = locked;
+    lock();
 
     LOG_INFO("\n\nCore 0 (tud) running\n");
 
@@ -178,13 +178,15 @@ int main(void) {
                 hex_dump(key, 16);
                 enc_set_key(key, sizeof(key));
                 read_state(&kb);
+                if (kb.status == locked) {
+                    nfc_bad_key();
+                }
             }
         }
 
         if (kb.status != locked && absolute_time_diff_us(last_interaction, get_absolute_time()) > 1000 * IDLE_TIMEOUT_MILLIS) {
-            LOG_INFO("Timedout - clearing encrypted data\n");
-            memset(kb.local_store, 0, FLASH_STORE_SIZE);
-            kb.status = locked;
+            LOG_INFO("Timed out - clearing encrypted data\n");
+            lock();
         }
     }
 
@@ -227,7 +229,7 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_re
     LOG_INFO("[%04x:%04x][%u] HID Interface%u, Protocol = %s\r\n", vid, pid, dev_addr, instance, protocol_str[itf_protocol]);
 
     // By default host stack will use activate boot protocol on supported interface.
-    // Therefore for this simple example, we only need to parse generic report descriptor (with built-in parser)
+    // Therefore, for this simple example, we only need to parse generic report descriptor (with built-in parser)
     if (itf_protocol == HID_ITF_PROTOCOL_NONE) {
         hid_info[instance].report_count = tuh_hid_parse_report_descriptor(hid_info[instance].report_info, MAX_REPORT, desc_report, desc_len);
         for (int i = 0; i < hid_info[instance].report_count; i++) {
@@ -428,6 +430,11 @@ void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report, uint16_
 
     LOG_TRACE("tud_hid_report_complete_cb");
     kb.send_to_host_in_progress = false;
+}
+
+void lock() {
+    memset(kb.local_store, 0, FLASH_STORE_SIZE);
+    kb.status = locked;
 }
 
 void hex_dump(void const *ptr, size_t len) {

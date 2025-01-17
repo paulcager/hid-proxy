@@ -51,7 +51,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     return;
 
                 case HID_KEY_ESCAPE:
-                    kb.status = locked;
+                    lock();
                     return;
 
                 case HID_KEY_ENTER:
@@ -143,6 +143,10 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
 
                 case HID_KEY_DELETE:
                     init_state(&kb);
+                    return;
+
+                case HID_KEY_END:
+                    lock();
                     return;
 
                 default:
