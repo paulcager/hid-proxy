@@ -6,7 +6,6 @@
 #include <hardware/i2c.h>
 #include <pico/binary_info/code.h>
 #include <pico/rand.h>
-#include "pn532-lib/pn532_rp2040.h"
 #include "hid_proxy.h"
 #include "logging.h"
 
@@ -143,7 +142,6 @@ static volatile absolute_time_t interrupt_time;
 
 static void gpio_callback(uint gpio, uint32_t events);
 static void read_ack();
-static int read_data(uint8_t *buff, uint8_t size);
 static bool send_frame(uint8_t command, uint8_t *data, uint8_t data_length);
 static bool decode_frame(uint8_t* input_frame, uint8_t frame_length, uint8_t **data, uint8_t *data_length);
 static uint8_t get_reader_status();
@@ -152,7 +150,7 @@ static bool send_read_request();
 static void scan_for_tag();
 static void send_authentication();
 
-static void debug_frame(uint8_t *f) {
+__attribute__((unused)) static void debug_frame(uint8_t *f) {
     frame_header_t *hdr = (frame_header_t *) f;
     if (hdr->preamble != 0) {
         printf("Invalid preamble: %02x\n", hdr->preamble);
@@ -341,10 +339,6 @@ static bool decode_frame(uint8_t* input_frame, uint8_t frame_length, uint8_t **d
     return true;
 }
 
-void try_nfc();
-
-
-
 void nfc_setup() {
     i2c_deinit(i2c0);
     i2c_init(i2c0, 100 * 1000);
@@ -377,7 +371,7 @@ void nfc_setup() {
 
 
 void nfc_task(bool key_required) {
-    static int previous_status = 0;
+    static unsigned int previous_status = 0;
     static bool previous_ack = false;
     if (previous_status != state.status || previous_ack != state.waiting_for_ack) {
         LOG_INFO("NFC status changed from %s%s to %s%s\n",
@@ -699,6 +693,8 @@ static void read_ack() {
 }
 
 void gpio_callback(uint gpio, uint32_t events) {
+    (void) gpio;
+    (void) events;
     interrupt_time = get_absolute_time();
     messages_pending++;
     if (messages_pending != 1) {

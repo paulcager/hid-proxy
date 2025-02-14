@@ -6,7 +6,6 @@ project(hid_proxy)
 pico_sdk_init()
 
 add_subdirectory("./Pico-PIO-USB" pico_pio_usb)
-add_subdirectory("./pico-arduino-compat/libs/adafruit-pn532")
 
 add_executable(hid_proxy
         hid_proxy.c
@@ -22,8 +21,8 @@ add_executable(hid_proxy
         tinycrypt/lib/source/sha256.c
         tinycrypt/lib/source/utils.c
         nfc_tag.c
-        pn532-lib/pn532.c
-        pn532-lib/pn532_rp2040.c
+        usb_host.c
+        usb_host.h
 )
 
 target_sources(hid_proxy PUBLIC
@@ -47,12 +46,12 @@ target_link_libraries(hid_proxy PUBLIC
         pico_rand
         pico_time
         hardware_flash
+        hardware_i2c
         hardware_exception
         pico_pio_usb
         tinyusb_device
         tinyusb_board
         tinyusb_host
-        pac-adafruit-pn532
 )
 
 pico_add_extra_outputs(hid_proxy)

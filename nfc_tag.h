@@ -9,6 +9,15 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+#define PN532_HOSTTOPN532                   (0xD4)
+#define PN532_PN532TOHOST                   (0xD5)
+
+#define PN532_COMMAND_GETFIRMWAREVERSION    (0x02)
+#define PN532_COMMAND_SAMCONFIGURATION      (0x14)
+#define PN532_COMMAND_INDATAEXCHANGE        (0x40)
+#define PN532_COMMAND_INLISTPASSIVETARGET   (0x4A)
+#define PN532_COMMAND_INLISTPASSIVETARGET   (0x4A)
+
 void nfc_setup();
 void nfc_task(bool key_required);
 

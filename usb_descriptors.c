@@ -26,6 +26,7 @@
 
 #include "tusb.h"
 #include "usb_descriptors.h"
+#include "hid_proxy.h"
 
 /* A combination of interfaces must have a unique product id, since PC will save device driver after the first plug.
  * Same VID/PID with different interface e.g MSC (first), then CDC (later) will possibly cause system error on PC.
@@ -80,12 +81,6 @@ uint8_t const * tud_descriptor_device_cb(void)
 // Configuration Descriptor
 //--------------------------------------------------------------------+
 
-enum {
-    ITF_NUM_KEYBOARD = 0,
-//    ITF_NUM_MOUSE,
-    ITF_NUM_TOTAL,
-};
-
 #define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + ITF_NUM_TOTAL*TUD_HID_DESC_LEN)
 
 #define EPNUM_KEYBOARD         0x83
@@ -95,13 +90,28 @@ enum {
 // HID Report Descriptor
 //--------------------------------------------------------------------+
 
-uint8_t const desc_hid_report[] =
-        {
-            TUD_HID_REPORT_DESC_KEYBOARD( HID_REPORT_ID(REPORT_ID_KEYBOARD         )),
-            TUD_HID_REPORT_DESC_MOUSE   ( HID_REPORT_ID(REPORT_ID_MOUSE            ))
-//  TUD_HID_REPORT_DESC_CONSUMER( HID_REPORT_ID(REPORT_ID_CONSUMER_CONTROL )),
-//  TUD_HID_REPORT_DESC_GAMEPAD ( HID_REPORT_ID(REPORT_ID_GAMEPAD          ))
-        };
+uint8_t const desc_hid_keyboard_report[] = {
+        TUD_HID_REPORT_DESC_KEYBOARD(),
+};
+
+uint8_t const desc_hid_mouse_report[] = {
+        TUD_HID_REPORT_DESC_MOUSE()
+};
+
+// Invoked when received GET HID REPORT DESCRIPTOR
+// Application return pointer to descriptor.
+// Descriptor contents must exist long enough for transfer to complete
+uint8_t const * tud_hid_descriptor_report_cb(uint8_t instance)
+{
+    printf("tud_hid_descriptor_report_cb %d\n", instance);
+//    if (instance == 0) {
+//        hex_dump(desc_hid_keyboard_report, sizeof(desc_hid_keyboard_report));
+//    } else {
+//        hex_dump(desc_hid_mouse_report,    sizeof(desc_hid_mouse_report));
+//    }
+
+    return (instance == 0) ? desc_hid_keyboard_report : desc_hid_mouse_report;
+}
 
 // full speed configuration
 uint8_t const desc_fs_configuration[] =
@@ -110,8 +120,8 @@ uint8_t const desc_fs_configuration[] =
   TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 250),
 
   // Interface number, string index, protocol, report descriptor len, EP In address, size & polling interval
-  TUD_HID_DESCRIPTOR(ITF_NUM_KEYBOARD, 0, HID_ITF_PROTOCOL_KEYBOARD, sizeof(desc_hid_report)/ITF_NUM_TOTAL, EPNUM_KEYBOARD, CFG_TUD_HID_EP_BUFSIZE, 5),
-  //TUD_HID_DESCRIPTOR(ITF_NUM_MOUSE,    0, HID_ITF_PROTOCOL_MOUSE,    sizeof(desc_hid_report)/ITF_NUM_TOTAL, EPNUM_MOUSE,    CFG_TUD_HID_EP_BUFSIZE, 5)
+  TUD_HID_DESCRIPTOR(ITF_NUM_KEYBOARD, 0, HID_ITF_PROTOCOL_KEYBOARD, sizeof(desc_hid_keyboard_report), EPNUM_KEYBOARD, CFG_TUD_HID_EP_BUFSIZE, 5),
+  TUD_HID_DESCRIPTOR(ITF_NUM_MOUSE,    0, HID_ITF_PROTOCOL_MOUSE,    sizeof(desc_hid_mouse_report),    EPNUM_MOUSE,    CFG_TUD_HID_EP_BUFSIZE, 5)
 };
 
 // Invoked when received GET CONFIGURATION DESCRIPTOR
@@ -124,16 +134,6 @@ uint8_t const * tud_descriptor_configuration_cb(uint8_t index)
   return desc_fs_configuration;
 }
 
-// Invoked when received GET HID REPORT DESCRIPTOR
-// Application return pointer to descriptor.
-// Descriptor contents must exist long enough for transfer to complete
-uint8_t const * tud_hid_descriptor_report_cb(uint8_t instance)
-{
-    (void) instance;
-    printf("tud_hid_descriptor_report_cb %d\n", instance);
-    return desc_hid_report;
-}
-
 
 //--------------------------------------------------------------------+
 // String Descriptors
@@ -144,11 +144,11 @@ char const* string_desc_arr [] =
 {
   (const char[]) { 0x09, 0x04 }, // 0: is supported language is English (0x0409)
   "CagerSB",                     // 1: Manufacturer
-  "USB Keyboard",              // 2: Product
-  "692156789012",                // 3: Serials, should use chip ID
+  "USB Keyboard",                // 2: Product
+  "892156789012",                // 3: Serials, should use chip ID
 };
 
-static uint16_t _desc_str[32];
+static uint16_t desc_str[32];
 
 // Invoked when received GET STRING DESCRIPTOR request
 // Application return pointer to descriptor, whose contents must exist long enough for transfer to complete
@@ -160,7 +160,7 @@ uint16_t const* tud_descriptor_string_cb(uint8_t index, uint16_t langid)
 
   if ( index == 0)
   {
-    memcpy(&_desc_str[1], string_desc_arr[0], 2);
+    memcpy(&desc_str[1], string_desc_arr[0], 2);
     chr_count = 1;
   }else
   {
@@ -178,12 +178,12 @@ uint16_t const* tud_descriptor_string_cb(uint8_t index, uint16_t langid)
     // Convert ASCII string into UTF-16
     for(uint8_t i=0; i<chr_count; i++)
     {
-      _desc_str[1+i] = str[i];
+        desc_str[1 + i] = str[i];
     }
   }
 
   // first byte is length (including header), second byte is string type
-  _desc_str[0] = (TUSB_DESC_STRING << 8 ) | (2*chr_count + 2);
+  desc_str[0] = (TUSB_DESC_STRING << 8 ) | (2 * chr_count + 2);
 
-  return _desc_str;
+  return desc_str;
 }

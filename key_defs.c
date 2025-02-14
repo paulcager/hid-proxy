@@ -1,14 +1,15 @@
 #include <pico/multicore.h>
 #include <pico/bootrom.h>
 #include "hid_proxy.h"
-#include"usb_descriptors.h"
+#include "usb_descriptors.h"
 #include "encryption.h"
 #include "nfc_tag.h"
 
 static hid_keyboard_report_t release_all_keys = {0, 0, {0, 0, 0, 0, 0, 0}};
 
 void evaluate_keydef(hid_keyboard_report_t *report, uint8_t key0);
-char keycode_to_letter_or_digit(uint8_t keycode);
+
+__attribute__((unused)) char keycode_to_letter_or_digit(uint8_t keycode);
 
 void start_define(uint8_t key0);
 
@@ -40,7 +41,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
             if (kb_report->modifier == 0x22 && key0 == 0) {
                 kb.status = locked_seen_magic;
             } else {
-                add_to_host_queue(0, REPORT_ID_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
+                add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
             }
 
             return;
@@ -66,7 +67,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
 
                 default:
                     kb.status = locked;
-                    add_to_host_queue(0, REPORT_ID_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
+                    add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
                     return;
             }
 
@@ -97,7 +98,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 kb.status = seen_magic;
             } else {
                 LOG_TRACE("Adding to host Q: instance=%d, report_id=%d, len=%d\n", 0, REPORT_ID_KEYBOARD, sizeof(hid_keyboard_report_t));
-                add_to_host_queue(0, REPORT_ID_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
+                add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
             }
 
             return;
@@ -240,19 +241,19 @@ void evaluate_keydef(hid_keyboard_report_t *report, uint8_t key0) {
 
     if (def == NULL) {
         LOG_INFO("No sequence defined for keycode %x\n", key0);
-        add_to_host_queue(0, REPORT_ID_KEYBOARD, sizeof(hid_keyboard_report_t), report);
-        add_to_host_queue(0, REPORT_ID_KEYBOARD, sizeof(hid_keyboard_report_t),&release_all_keys);
+        add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), report);
+        add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t),&release_all_keys);
         return;
     }
 
     LOG_INFO("Executing keycode %x with %d sequences\n", key0, def->used);
 
     // TODO
-    add_to_host_queue(0, REPORT_ID_KEYBOARD, sizeof(hid_keyboard_report_t),&release_all_keys);
+    add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t),&release_all_keys);
     for (int i = 0; i < def->used; i++) {
         hid_keyboard_report_t next_report = def->reports[i];
         LOG_TRACE("> %x %x\n", next_report.modifier, next_report.keycode[0]);
-        add_to_host_queue(0, REPORT_ID_KEYBOARD, sizeof(hid_keyboard_report_t),&next_report);
+        add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t),&next_report);
     }
 }
 

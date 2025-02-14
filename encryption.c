@@ -47,7 +47,7 @@ void enc_start_key_derivation() {
     pico_unique_board_id_t id;
     pico_get_unique_board_id(&id);
     tc_sha256_init(&sha256);
-    tc_sha256_update(&sha256, &id, PICO_UNIQUE_BOARD_ID_SIZE_BYTES);
+    tc_sha256_update(&sha256, (const uint8_t *) &id, PICO_UNIQUE_BOARD_ID_SIZE_BYTES);
 }
 
 bool store_encrypt(kb_t *kb) {

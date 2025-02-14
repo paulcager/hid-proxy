@@ -4,7 +4,7 @@
 
 This is a proof of concept had has may bodges, including:
 
-1. No verification that we do not overflow buffers, such as the password buffer, keystroke store etc.
+1. No verification that we do not overflow buffers, such as the keystroke store etc.
 2. Fairly crappy encryption - the raw keystrokes fed into SHA256 to form an encryption key. An IV is also used. 
 3. Absolutely rubbish user interface. No feedback of current state etc. 
 4. The code is also rubbish. If I wasn't throwing it away I'd rewrite it.
@@ -38,3 +38,8 @@ Or, hold down both shift keys and the PAUSE key at the same time.
 ## Serial.
 
 minicom -D /dev/ttyACM0 -b 115200
+
+## Mac Keyboard
+
+rm /Library/Preferences/com.apple.keyboardtype.plist
+reboot
