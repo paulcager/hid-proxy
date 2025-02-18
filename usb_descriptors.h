@@ -28,6 +28,10 @@
 enum {
     ITF_NUM_KEYBOARD = 0,
     ITF_NUM_MOUSE,
+#ifdef LIB_PICO_STDIO_USB
+    ITF_NUM_CDC,
+    ITF_NUM_CDC_DATA,
+#endif
     ITF_NUM_TOTAL
 };
 

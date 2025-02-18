@@ -36,7 +36,9 @@ void enc_clear_key() {
 
 void enc_end_key_derivation() {
     tc_sha256_final(key, &sha256);
+#ifdef DEBUG
     hex_dump(key, 32);
+#endif
 }
 
 void enc_add_key_derivation_byte(uint8_t b) {

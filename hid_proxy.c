@@ -33,6 +33,7 @@
 #include "pico/stdlib.h"
 #include "pico/util/queue.h"
 #include "pico/multicore.h"
+#include "hardware/clocks.h"
 
 #include "pio_usb.h"
 #include "tusb.h"
@@ -72,6 +73,12 @@ int main(void) {
     // default 125MHz is not appropriate for PIO. Sysclock should be multiple of 12MHz.
     set_sys_clock_khz(120000, true);
 
+    nfc_setup();
+
+    // init device stack on native usb (roothub port0)
+    // Needs to be done before stdio_init_all();
+    tud_init(0);
+
     stdio_init_all();
 
     flash_safe_execute_core_init();
@@ -85,14 +92,10 @@ int main(void) {
 
     LOG_INFO("\n\nCore 0 (tud) running\n");
 
-    nfc_setup();
 
     multicore_reset_core1();
     // all USB task run in core1
     multicore_launch_core1(core1_main);
-
-    // init device stack on native usb (roothub port0)
-    tud_init(0);
 
     absolute_time_t last_interaction = get_absolute_time();
     status_t previous_status = locked;
@@ -104,6 +107,7 @@ int main(void) {
         }
 
         tud_task(); // tinyusb device task
+        tud_cdc_write_flush();
         nfc_task(kb.status == locked);
 
         hid_report_t report;

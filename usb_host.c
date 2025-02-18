@@ -11,7 +11,6 @@
 #include "pico.h"
 #include <stdio.h>
 #include "usb_host.h"
-#include "hid_proxy.h"
 
 _Noreturn void core1_loop();
 
@@ -19,7 +18,7 @@ void handle_mouse_report(hid_report_t *report);
 
 static void handle_generic_report(hid_report_t report);
 
-#define MAX_REPORT  2
+#define MAX_REPORT  4
 static struct {
     uint8_t report_count;
     tuh_hid_report_info_t report_info[MAX_REPORT];
@@ -39,11 +38,19 @@ void core1_main() {
     pio_cfg.pin_dp = 2;
     LOG_INFO("pio_cfg.pin_dp = %d\n", pio_cfg.pin_dp);
     tuh_configure(1, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &pio_cfg);
-
     bool ok = tuh_init(1);
     if (!ok) {
-        panic("tuh_init");
+        panic("tuh_init(1)");
     }
+
+    // TODO - to support this properly, we'll have to determine what's been plugged into which port.
+//    pio_cfg.pin_dp = 6;
+//    LOG_INFO("pio_cfg.pin_dp = %d\n", pio_cfg.pin_dp);
+//    tuh_configure(2, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &pio_cfg);
+//    ok = tuh_init(2);
+//    if (!ok) {
+//        panic("tuh_init(2)");
+//    }
 
     LOG_INFO("tuh running\n");
     core1_loop();
@@ -76,8 +83,9 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_re
     tuh_vid_pid_get(dev_addr, &vid, &pid);
 
     LOG_INFO("[%04x:%04x][%u] HID Interface%u, Protocol = %s\r\n", vid, pid, dev_addr, instance, protocol_str[itf_protocol]);
+    hex_dump(desc_report, desc_len);
 
-    // By default host stack will use activate boot protocol on supported interface.
+    // By default, host stack will use activate boot protocol on supported interface.
     // Therefore, for this simple example, we only need to parse generic report descriptor (with built-in parser)
     if (itf_protocol == HID_ITF_PROTOCOL_NONE) {
         hid_info[instance].report_count = tuh_hid_parse_report_descriptor(hid_info[instance].report_info, MAX_REPORT, desc_report, desc_len);
@@ -97,6 +105,7 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_re
 // Invoked when device with hid interface is un-mounted
 void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
     LOG_INFO("[%u] HID Interface%u is unmounted\r\n", dev_addr, instance);
+    stdio_flush();
 }
 
 void handle_mouse_report(hid_report_t *report) {
@@ -176,9 +185,7 @@ static void handle_generic_report(hid_report_t report) {
 
 // Invoked when received report from device via interrupt endpoint
 void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *report, uint16_t len) {
-    (void) len;
-
-    LOG_DEBUG("tuh_hid_report_received_cb: itf_protocol=%d on core %d\n", tuh_hid_interface_protocol(dev_addr, instance), get_core_num());
+    LOG_DEBUG("%d,%d: tuh_hid_report_received_cb: itf_protocol=%d on core %d\n", dev_addr, instance, tuh_hid_interface_protocol(dev_addr, instance), get_core_num());
 
     if (len > sizeof(union hid_reports)) {
         LOG_ERROR("Discarding report with size %d (max is %d)\n", len, sizeof(union hid_reports));
@@ -203,7 +210,7 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
 void next_report(hid_report_t report) {
     uint8_t const itf_protocol = tuh_hid_interface_protocol(report.dev_addr, report.instance);
 
-    LOG_TRACE("next_report: itf_protocol=%d on core %d\n", itf_protocol, get_core_num());
+    LOG_DEBUG("next_report: %d,%d itf_protocol=%d on core %d\n", report.dev_addr, report.instance, itf_protocol, get_core_num());
     LOG_TRACE("report.data.kb.keycode[0]=%x\n", report.data.kb.keycode[0]);
 
     switch (itf_protocol) {
