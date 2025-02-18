@@ -81,10 +81,17 @@ uint8_t const * tud_descriptor_device_cb(void)
 // Configuration Descriptor
 //--------------------------------------------------------------------+
 
-#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + ITF_NUM_TOTAL*TUD_HID_DESC_LEN)
-
 #define EPNUM_KEYBOARD         0x83
 #define EPNUM_MOUSE            0x84
+
+#ifdef LIB_PICO_STDIO_USB
+#define EPNUM_CDC_NOTIF        0x81
+#define EPNUM_CDC_OUT          0x02
+#define EPNUM_CDC_IN           0x82
+#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + (2*TUD_HID_DESC_LEN) + TUD_CDC_DESC_LEN)
+#else
+#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + (2*TUD_HID_DESC_LEN))
+#endif
 
 //--------------------------------------------------------------------+
 // HID Report Descriptor
@@ -117,11 +124,16 @@ uint8_t const * tud_hid_descriptor_report_cb(uint8_t instance)
 uint8_t const desc_fs_configuration[] =
 {
   // Config number, interface count, string index, total length, attribute, power in mA
-  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 250),
+  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 350),
 
   // Interface number, string index, protocol, report descriptor len, EP In address, size & polling interval
   TUD_HID_DESCRIPTOR(ITF_NUM_KEYBOARD, 0, HID_ITF_PROTOCOL_KEYBOARD, sizeof(desc_hid_keyboard_report), EPNUM_KEYBOARD, CFG_TUD_HID_EP_BUFSIZE, 5),
-  TUD_HID_DESCRIPTOR(ITF_NUM_MOUSE,    0, HID_ITF_PROTOCOL_MOUSE,    sizeof(desc_hid_mouse_report),    EPNUM_MOUSE,    CFG_TUD_HID_EP_BUFSIZE, 5)
+  TUD_HID_DESCRIPTOR(ITF_NUM_MOUSE,    0, HID_ITF_PROTOCOL_MOUSE,    sizeof(desc_hid_mouse_report),    EPNUM_MOUSE,    CFG_TUD_HID_EP_BUFSIZE, 5),
+
+#ifdef LIB_PICO_STDIO_USB
+  // Interface number, string index, EP notification address and size, EP data address (out, in) and size.
+  TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 4, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
+#endif
 };
 
 // Invoked when received GET CONFIGURATION DESCRIPTOR
@@ -146,6 +158,9 @@ char const* string_desc_arr [] =
   "CagerSB",                     // 1: Manufacturer
   "USB Keyboard",                // 2: Product
   "892156789012",                // 3: Serials, should use chip ID
+#ifdef LIB_PICO_STDIO_USB
+  "TinyUSB CDC",                 // 4: CDC Interface
+#endif
 };
 
 static uint16_t desc_str[32];

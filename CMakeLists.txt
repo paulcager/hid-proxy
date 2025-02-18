@@ -17,7 +17,6 @@ add_executable(hid_proxy
         encryption.h
         tiny-AES-c/aes.c
         sane.c
-#        nfc_tag
         tinycrypt/lib/source/sha256.c
         tinycrypt/lib/source/utils.c
         nfc_tag.c
@@ -56,6 +55,8 @@ target_link_libraries(hid_proxy PUBLIC
 
 pico_add_extra_outputs(hid_proxy)
 
+# TODO - disable USB stdio for prod build.
+# TODO - also need to modify pcio SDK src/rp2_common/pico_stdio_usb/stdio_usb.c to remove `#ifndef LIB_TINYUSB_HOST`
 pico_enable_stdio_usb(hid_proxy 0)
 pico_enable_stdio_uart(hid_proxy 1)
 
