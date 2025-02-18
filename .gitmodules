@@ -1,6 +1,3 @@
-[submodule "Pico-PIO-USB"]
-	path = Pico-PIO-USB
-	url = https://github.com/sekigon-gonnoc/Pico-PIO-USB
 [submodule "tiny-AES-c"]
 	path = tiny-AES-c
 	url = https://github.com/kokke/tiny-AES-c.git
@@ -16,3 +13,6 @@
 [submodule "tinycrypt"]
 	path = tinycrypt
 	url = git@github.com:intel/tinycrypt.git
+[submodule "Pico-PIO-USB"]
+	path = Pico-PIO-USB
+	url = git@github.com:sekigon-gonnoc/Pico-PIO-USB.git
