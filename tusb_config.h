@@ -38,7 +38,6 @@
 
 // Enable device stack
 #define CFG_TUD_ENABLED     1
-#define CFG_TUD_HID         1
 
 // Enable host stack with pio-usb
 #define CFG_TUH_ENABLED     1
@@ -78,8 +77,11 @@
 #endif
 
 //------------- CLASS -------------//
-#define CFG_TUD_CDC              1
-#define CFG_TUD_HID              1
+#define CFG_TUD_HID               2     // Keyboard and Mouse
+#define CFG_TUD_CDC               0
+#define CFG_TUD_MSC               0
+#define CFG_TUD_MIDI              0
+#define CFG_TUD_VENDOR            0
 
 // CDC FIFO size of TX and RX
 #define CFG_TUD_CDC_RX_BUFSIZE   256

@@ -17,9 +17,9 @@
 
 #define FLASH_STORE_ADDRESS ((void*)(XIP_BASE + FLASH_STORE_OFFSET))
 
-// The number of seconds without any keyboard input after which we'll
+// The number of milliseconds without any keyboard input after which we'll
 // clear the plain-text storage, requiring re-input of the passphrase.
-#define IDLE_TIMEOUT_MILLIS (30 * 60 * 1000)
+#define IDLE_TIMEOUT_MILLIS ((int64_t)(120 * 60 * 1000))
 
 union hid_reports {
     hid_keyboard_report_t kb;
@@ -129,6 +129,8 @@ extern void handle_keyboard_report(hid_keyboard_report_t *report);
 extern void send_report_to_host(send_data_t to_send);
 
 extern void hex_dump(void const *p, size_t len);
+
+extern void lock();
 
 inline void add_to_host_queue(uint8_t instance, uint8_t report_id, uint16_t len, void *data) {
     send_data_t item = {.instance = instance, .report_id = report_id, .len = len};

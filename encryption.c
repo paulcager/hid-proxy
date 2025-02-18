@@ -16,7 +16,18 @@
 
 static struct tc_sha256_state_struct sha256;
 
-static uint8_t key[32];
+static uint8_t key[32];     // Allow for a 32-byte SHA digest, but AES will only use the first 16 bytes as a key.
+
+void enc_set_key(uint8_t *data, size_t length) {
+    assert(length <= sizeof(key));
+    memset(key, 0, sizeof(key));
+    memcpy(key, data, length);
+}
+
+void enc_get_key(uint8_t *data, size_t length) {
+    assert(length <= sizeof(key));
+    memcpy(data, key, length);
+}
 
 void enc_clear_key() {
     memset(key, 0, sizeof key);
@@ -36,7 +47,7 @@ void enc_start_key_derivation() {
     pico_unique_board_id_t id;
     pico_get_unique_board_id(&id);
     tc_sha256_init(&sha256);
-    tc_sha256_update(&sha256, &id, PICO_UNIQUE_BOARD_ID_SIZE_BYTES);
+    tc_sha256_update(&sha256, (const uint8_t *) &id, PICO_UNIQUE_BOARD_ID_SIZE_BYTES);
 }
 
 bool store_encrypt(kb_t *kb) {

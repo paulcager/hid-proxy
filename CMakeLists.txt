@@ -6,7 +6,6 @@ project(hid_proxy)
 pico_sdk_init()
 
 add_subdirectory("./Pico-PIO-USB" pico_pio_usb)
-add_subdirectory("./pico-arduino-compat/libs/adafruit-pn532")
 
 add_executable(hid_proxy
         hid_proxy.c
@@ -21,6 +20,9 @@ add_executable(hid_proxy
 #        nfc_tag
         tinycrypt/lib/source/sha256.c
         tinycrypt/lib/source/utils.c
+        nfc_tag.c
+        usb_host.c
+        usb_host.h
 )
 
 target_sources(hid_proxy PUBLIC
@@ -42,22 +44,26 @@ target_link_libraries(hid_proxy PUBLIC
         pico_stdlib
         pico_flash
         pico_rand
+        pico_time
         hardware_flash
+        hardware_i2c
         hardware_exception
         pico_pio_usb
         tinyusb_device
         tinyusb_board
         tinyusb_host
-        pac-adafruit-pn532
 )
 
 pico_add_extra_outputs(hid_proxy)
 
 pico_enable_stdio_usb(hid_proxy 0)
 pico_enable_stdio_uart(hid_proxy 1)
+
+target_compile_definitions(hid_proxy PRIVATE
 # Can move the UART0 ports like so:
-#target_compile_definitions(hid_proxy PRIVATE
 #        PICO_DEFAULT_UART_RX_PIN=16
 #        PICO_DEFAULT_UART_TX_PIN=17
-#)
+        PN532DEBUG=1
+        DEBUG_SERIAL=Serial
+)
 
