@@ -42,9 +42,12 @@ void save_state(kb_t *kb) {
 }
 
 void read_state(kb_t *kb) {
-    if (memcmp(FLASH_STORE_ADDRESS, FLASH_STORE_MAGIC, 8) != 0) {
-        LOG_INFO("No matching magic - leaving locked\n");
-        kb->status = locked;
+    // Check if flash is blank (magic is not expected value)
+    bool has_magic = memcmp(FLASH_STORE_ADDRESS, FLASH_STORE_MAGIC, 8) == 0;
+
+    if (!has_magic) {
+        LOG_INFO("Flash appears blank/corrupt - initializing\n");
+        init_state(kb);
     } else {
         memcpy(kb->local_store, FLASH_STORE_ADDRESS, FLASH_STORE_SIZE);
         if (!store_decrypt(kb)){
@@ -67,7 +70,7 @@ void init_state(kb_t *kb) {
 
     save_state(kb);
 
-    kb->status = normal;
+    kb->status = blank;
 
     assert_sane(kb);
 }

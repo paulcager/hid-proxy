@@ -21,9 +21,10 @@
 void nfc_setup();
 void nfc_task(bool key_required);
 
+// NFC key storage uses 2 consecutive 16-byte blocks to store 32-byte AES-256 keys
 void nfc_write_key(uint8_t *key, size_t key_length, unsigned long timeout_millis);
 void nfc_bad_key();
 bool nfc_key_available();
-bool nfc_get_key(uint8_t key[16]);
+bool nfc_get_key(uint8_t key[32]);  // Changed from key[16] to key[32] for AES-256
 
 #endif //HID_PROXY_NFC_TAG_H

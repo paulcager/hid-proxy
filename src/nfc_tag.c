@@ -15,7 +15,11 @@
 #define PN532_ADDRESS           0x24
 #define HOST_TO_PN532           0xD4
 #define PN532_TO_HOST           0xD5
-#define KEY_ADDRESS 0x3A
+// AES-256 uses 32-byte keys, which requires 2 consecutive 16-byte NFC blocks.
+// Block 0x3A stores bytes 0-15, block 0x3B stores bytes 16-31.
+// Both blocks are in the same sector, so single authentication grants access to both.
+#define KEY_ADDRESS        0x3A
+#define KEY_ADDRESS_2      0x3B
 
 #define NUM_KNOWN_AUTHS   16
 static const uint8_t known_auths[NUM_KNOWN_AUTHS][6] =  {
@@ -80,8 +84,10 @@ struct {
         sending_config,
         waiting_for_tag,
         waiting_for_auth,
-        waiting_for_data,
-        waiting_for_write,
+        waiting_for_data,        // Reading first 16 bytes from block 0x3A
+        waiting_for_data_block2, // Reading second 16 bytes from block 0x3B
+        waiting_for_write,       // Writing first 16 bytes to block 0x3A
+        waiting_for_write_block2,// Writing second 16 bytes to block 0x3B
         idle,
         idle_until,
         restart_after_idle,
@@ -97,7 +103,7 @@ struct {
     uint8_t id[7];  //  Mifare classic is 4-byte, NTAG213 is 7-byte (we won't work with one of those).
     uint auth_key_index;  // Ranges over knownKeys
     bool key_known;
-    uint8_t key[16];
+    uint8_t key[32];  // Full 32-byte AES-256 key (stored across 2 NFC blocks)
 } state;
 
 static char *nfc_status_string(int status) {
@@ -114,8 +120,12 @@ static char *nfc_status_string(int status) {
             return "waiting_for_auth";
         case waiting_for_data:
             return "waiting_for_data";
+        case waiting_for_data_block2:
+            return "waiting_for_data_block2";
         case waiting_for_write:
             return "waiting_for_write";
+        case waiting_for_write_block2:
+            return "waiting_for_write_block2";
         case idle:
             return "idle";
         case idle_until:
@@ -145,8 +155,8 @@ static void read_ack();
 static bool send_frame(uint8_t command, uint8_t *data, uint8_t data_length);
 static bool decode_frame(uint8_t* input_frame, uint8_t frame_length, uint8_t **data, uint8_t *data_length);
 static uint8_t get_reader_status();
-static bool send_write_request(uint8_t *data, size_t data_length);
-static bool send_read_request();
+static bool send_write_request(uint8_t *data, size_t data_length, uint8_t block_address);
+static bool send_read_request(uint8_t block_address);
 static void scan_for_tag();
 static void send_authentication();
 
@@ -208,13 +218,14 @@ static char *id_as_string() {
 }
 
 // ================================ Public functions ================================
+// Request to write a 32-byte AES-256 key to NFC tag (stored across 2 consecutive blocks)
 void nfc_write_key(uint8_t *key, size_t key_length, unsigned long timeout_millis) {
-    if (key_length != 16) {
-        LOG_ERROR("Ignoring attempt to write %d byte key", key_length);
+    if (key_length != 32) {
+        LOG_ERROR("Ignoring attempt to write %d byte key (expected 32 bytes)\n", key_length);
         return;
     }
 
-    LOG_INFO("NFC write requested\n");
+    LOG_INFO("NFC write requested for 32-byte key\n");
 
     state.write_requested = true;
     state.key_known = false;    // I guess it is known, but we'd like to clear it anyway.
@@ -246,9 +257,12 @@ bool nfc_key_available() {
     return state.key_known;
 }
 
-bool nfc_get_key(uint8_t key[16]) {
+// Retrieve the 32-byte AES-256 key from NFC tag (if available)
+// key: Buffer to receive 32 bytes
+// Returns: true if key was available, false otherwise
+bool nfc_get_key(uint8_t key[32]) {
     if (state.key_known) {
-        memcpy(key, state.key, sizeof(state.key));
+        memcpy(key, state.key, 32);  // Copy full 32-byte key
         memset(state.key, 0, sizeof(state.key));
         state.key_known = false;
         return true;
@@ -374,7 +388,7 @@ void nfc_task(bool key_required) {
     static unsigned int previous_status = 0;
     static bool previous_ack = false;
     if (previous_status != state.status || previous_ack != state.waiting_for_ack) {
-        LOG_INFO("NFC status changed from %s%s to %s%s\n",
+        LOG_TRACE("NFC status changed from %s%s to %s%s\n",
                  nfc_status_string(previous_status),
                  previous_ack ? "[ACK pending]" : "",
                  nfc_status_string(state.status),
@@ -389,7 +403,7 @@ void nfc_task(bool key_required) {
     }
 
     if (state.status == starting) {
-        LOG_INFO("Sending GETFIRMWAREVERSION to start identification process\n");
+        LOG_TRACE("Sending GETFIRMWAREVERSION to start identification process\n");
         if (!send_frame(PN532_COMMAND_GETFIRMWAREVERSION, NULL, 0)) {
             state.status = restart_after_idle;
             state.idle_finish = make_timeout_time_ms(1000);
@@ -546,58 +560,122 @@ void nfc_task(bool key_required) {
                     LOG_INFO("Ignoring stale write request\n");
                     state.write_requested = false;
                 } else {
-                    send_write_request(state.key, sizeof(state.key));
+                    // Write first 16 bytes (bytes 0-15) to block 0x3A
+                    send_write_request(state.key, 16, KEY_ADDRESS);
                     state.status = waiting_for_write;
                 }
             } else {
-                send_read_request();
+                // Read first 16 bytes (bytes 0-15) from block 0x3A
+                send_read_request(KEY_ADDRESS);
                 state.status = waiting_for_data;
             }
 
             break;
 
         case waiting_for_data:
+            // Reading first 16 bytes from block 0x3A
             if (!read_response(1 + 16)) {
-                LOG_ERROR("Failed to read tag\n");
-                // TODO - back to scan
+                LOG_ERROR("Failed to read tag block 1\n");
+                state.status = idle;
                 state.unavailable = true;
                 return;
             }
 
 #ifdef DEBUG
-            printf("Data\n");
+            printf("Data block 1\n");
             hex_dump(response_data, response_data_size);
 #endif
 
             if (response_data[0] != 0) {
-                LOG_ERROR("read failed:\n");
+                LOG_ERROR("read failed for block 1:\n");
                 hex_dump(response_data, response_data_size);
                 state.status = idle;
                 state.key_known = false;
                 return;
             }
 
-            state.status = idle;
-            memcpy(state.key, response_data+1, response_data_size-1);
+            // Store first 16 bytes (0-15) of the key
+            memcpy(state.key, response_data+1, 16);
+
+            // Now read second 16 bytes from block 0x3B
+            send_read_request(KEY_ADDRESS_2);
+            state.status = waiting_for_data_block2;
+
+            break;
+
+        case waiting_for_data_block2:
+            // Reading second 16 bytes from block 0x3B
+            if (!read_response(1 + 16)) {
+                LOG_ERROR("Failed to read tag block 2\n");
+                state.status = idle;
+                state.key_known = false;
+                return;
+            }
+
+#ifdef DEBUG
+            printf("Data block 2\n");
+            hex_dump(response_data, response_data_size);
+#endif
+
+            if (response_data[0] != 0) {
+                LOG_ERROR("read failed for block 2:\n");
+                hex_dump(response_data, response_data_size);
+                state.status = idle;
+                state.key_known = false;
+                return;
+            }
+
+            // Store second 16 bytes (16-31) of the key
+            memcpy(state.key + 16, response_data+1, 16);
             state.key_read_time = get_absolute_time();
             state.key_known = true;
+            state.status = idle;
+
+            LOG_INFO("Successfully read 32-byte key from NFC tag\n");
 
             break;
 
         case waiting_for_write:
+            // Writing first 16 bytes to block 0x3A
             if (!read_response(1 + 16)) {
-                LOG_ERROR("Failed to write tag\n");
+                LOG_ERROR("Failed to write tag block 1\n");
                 state.status = idle;
                 return;
             }
 
-            LOG_INFO("Write reply\n");
+            LOG_INFO("Write block 1 reply\n");
             hex_dump(response_data, response_data_size);
 
             if (response_data[0] != 0) {
-                LOG_ERROR("Write failed: %02x\n", response_data[0]);
+                LOG_ERROR("Write failed for block 1: %02x\n", response_data[0]);
+                state.status = idle;
+                return;
             }
 
+            // First block written successfully, now write second 16 bytes (bytes 16-31) to block 0x3B
+            send_write_request(state.key + 16, 16, KEY_ADDRESS_2);
+            state.status = waiting_for_write_block2;
+
+            break;
+
+        case waiting_for_write_block2:
+            // Writing second 16 bytes to block 0x3B
+            if (!read_response(1 + 16)) {
+                LOG_ERROR("Failed to write tag block 2\n");
+                state.status = idle;
+                return;
+            }
+
+            LOG_INFO("Write block 2 reply\n");
+            hex_dump(response_data, response_data_size);
+
+            if (response_data[0] != 0) {
+                LOG_ERROR("Write failed for block 2: %02x\n", response_data[0]);
+                state.status = idle;
+                return;
+            }
+
+            LOG_INFO("Successfully wrote 32-byte key to NFC tag\n");
             state.status = idle;
 
             break;
@@ -608,7 +686,9 @@ void nfc_task(bool key_required) {
     }
 }
 
-bool send_write_request(uint8_t *data, size_t data_length) {
+// Write up to 16 bytes to the specified NFC block address
+// block_address: The NFC block to write to (e.g., KEY_ADDRESS or KEY_ADDRESS_2)
+bool send_write_request(uint8_t *data, size_t data_length, uint8_t block_address) {
     // Maximum we can write to a block is 16 bytes.
     if (data_length > 16) {
         return false;
@@ -617,7 +697,7 @@ bool send_write_request(uint8_t *data, size_t data_length) {
     static uint8_t buff[3 + 16];
     buff[0] = state.target_num;
     buff[1] = 0xa0;   // 16-byte write.
-    buff[2] = KEY_ADDRESS;
+    buff[2] = block_address;
 
     memcpy(buff + 3, data, data_length);
     send_frame(PN532_COMMAND_INDATAEXCHANGE, buff, 3 + data_length);
@@ -625,11 +705,13 @@ bool send_write_request(uint8_t *data, size_t data_length) {
     return true;
 }
 
-bool send_read_request() {
+// Read 16 bytes from the specified NFC block address
+// block_address: The NFC block to read from (e.g., KEY_ADDRESS or KEY_ADDRESS_2)
+bool send_read_request(uint8_t block_address) {
     uint8_t args[] = {
             state.target_num,
             0x30,   // 16-byte read.
-            KEY_ADDRESS,
+            block_address,
     };
 
     send_frame(PN532_COMMAND_INDATAEXCHANGE, args, sizeof(args));

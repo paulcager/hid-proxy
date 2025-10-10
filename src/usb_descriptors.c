@@ -29,10 +29,9 @@
 #include "hid_proxy.h"
 
 /* A combination of interfaces must have a unique product id, since PC will save device driver after the first plug.
- * Same VID/PID with different interface e.g MSC (first), then CDC (later) will possibly cause system error on PC.
  *
  * Auto ProductID layout's Bitmap:
- *   [MSB]         HID | MSC | CDC          [LSB]
+ *   [MSB]         HID | CDC          [LSB]
  */
 #define _PID_MAP(itf, n)  ( (CFG_TUD_##itf) << (n) )
 //#define USB_PID           (0x4000 | _PID_MAP(CDC, 0) | _PID_MAP(MSC, 1) | _PID_MAP(HID, 2) | _PID_MAP(MIDI, 3) | _PID_MAP(VENDOR, 4) )
@@ -84,7 +83,7 @@ uint8_t const * tud_descriptor_device_cb(void)
 #define EPNUM_KEYBOARD         0x83
 #define EPNUM_MOUSE            0x84
 
-#ifdef LIB_PICO_STDIO_USB
+#ifdef ENABLE_USB_STDIO
 #define EPNUM_CDC_NOTIF        0x81
 #define EPNUM_CDC_OUT          0x02
 #define EPNUM_CDC_IN           0x82
@@ -130,7 +129,7 @@ uint8_t const desc_fs_configuration[] =
   TUD_HID_DESCRIPTOR(ITF_NUM_KEYBOARD, 0, HID_ITF_PROTOCOL_KEYBOARD, sizeof(desc_hid_keyboard_report), EPNUM_KEYBOARD, CFG_TUD_HID_EP_BUFSIZE, 5),
   TUD_HID_DESCRIPTOR(ITF_NUM_MOUSE,    0, HID_ITF_PROTOCOL_MOUSE,    sizeof(desc_hid_mouse_report),    EPNUM_MOUSE,    CFG_TUD_HID_EP_BUFSIZE, 5),
 
-#ifdef LIB_PICO_STDIO_USB
+#ifdef ENABLE_USB_STDIO
   // Interface number, string index, EP notification address and size, EP data address (out, in) and size.
   TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 4, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
 #endif
@@ -158,7 +157,7 @@ char const* string_desc_arr [] =
   "CagerSB",                     // 1: Manufacturer
   "USB Keyboard",                // 2: Product
   "892156789012",                // 3: Serials, should use chip ID
-#ifdef LIB_PICO_STDIO_USB
+#ifdef ENABLE_USB_STDIO
   "TinyUSB CDC",                 // 4: CDC Interface
 #endif
 };
