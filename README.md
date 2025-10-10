@@ -1,45 +1,272 @@
 # hid-proxy
 
-**Do NOT use in production**
+A USB HID keyboard proxy for Raspberry Pi Pico that intercepts and processes keystrokes between a physical keyboard and host computer. Provides encrypted text expansion/macros with optional NFC tag authentication.
 
-This is a proof of concept had has may bodges, including:
+**⚠️ WARNING: Do NOT use in production**
 
-1. No verification that we do not overflow buffers, such as the keystroke store etc.
-2. Fairly crappy encryption - the raw keystrokes fed into SHA256 to form an encryption key. An IV is also used. 
-3. Absolutely rubbish user interface. No feedback of current state etc. 
-4. The code is also rubbish. If I wasn't throwing it away I'd rewrite it.
+This is a proof-of-concept and has many bodges, including:
 
+1. **No buffer overflow protection** - keystroke storage can overflow
+2. **Basic encryption implementation** - single SHA256 round for key derivation, no authenticated encryption
+3. **Poor user interface** - no visual feedback of current state
+4. **Code quality issues** - acknowledged by author as requiring rewrite
+5. **Known bugs** - see BUGS.md for comprehensive list
 
-## Using the Absolutely Rubbish User Interface
+## Features
 
-Normally, keystrokes are passed through from the keyboard to the host computer. To make
-something special happen you have to do a "double shift":
+- **Pass-through mode**: Keystrokes normally pass directly from physical keyboard to host
+- **Text expansion**: Define single keystrokes that expand to sequences (macros)
+- **Encrypted storage**: Key definitions stored encrypted in flash memory
+- **Passphrase unlock**: Decrypt key definitions with password
+- **NFC authentication**: Optionally store/read encryption keys from NFC tags
+- **Auto-lock**: Automatically locks after 120 minutes of inactivity
 
-* Simultaneously press *both* shift keys.
-* Release all keys.
+## Hardware Requirements
 
-The next keystroke defines what action to take:
+### Required Components
+- **Raspberry Pi Pico** (RP2040)
+- **USB cables**:
+  - One for connecting physical keyboard to Pico (requires USB-A to micro-USB adapter or cable)
+  - One for connecting Pico to host computer (micro-USB to USB-A/C)
+- **Physical keyboard** (any USB HID keyboard)
 
-| Key   | Description                                                                                                                                                                    |
-|-------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| ENTER | Start entering the passphrase to unlock the key definitions. Press ENTER at the end of the passphrase.                                                                         |
-| ESC   | Cancel current operation.                                                                                                                                                      |
-| DEL   | Delete everything (erase encryption key and keydefs in flash)                                                                                                                  |
-| END   | Lock  keydefs. Will need to re-enter passphrase to unlock.                                                                                                                     |
-| =     | Start defining a new / replacement key definition. The next keystroke is the key you are defining; following keys are the replacement text. Use a "double shift" to terminate. |
-| PRINT | Write key to NFC tag                                                                                                                                                           |
+### Optional Components
+- **PN532 NFC Reader** (for NFC tag authentication)
+- **Mifare Classic NFC tags** (for storing encryption keys)
 
-## Flashing
+### Wiring
 
-Usually easiest from CLion, running "ocd" debug config.
+**USB Connections:**
+- Physical keyboard → Pico USB host (via PIO-USB on GPIO 2/3)
+- Pico USB device → Host computer
 
-Or, hold down both shift keys and the PAUSE key at the same time.
+**NFC Reader (optional):**
+- PN532 SDA → GPIO 4
+- PN532 SCL → GPIO 5
+- PN532 VCC → 3.3V
+- PN532 GND → GND
 
-## Serial.
+**Debug UART (optional):**
+- UART0 TX → GPIO 0
+- UART0 RX → GPIO 1
 
+## Architecture
+
+The application uses both cores of the RP2040:
+
+- **Core 0**: Main logic, TinyUSB device stack (acts as keyboard to host), NFC operations, encryption/decryption
+- **Core 1**: TinyUSB host stack via PIO-USB (receives input from physical keyboard)
+
+Communication between cores uses lock-free queues for HID reports and LED status.
+
+## Building
+
+### Prerequisites
+
+1. **Pico SDK** installed (update path in CMakeLists.txt if not at `/home/paul/pico/pico-sdk`)
+2. **Git submodules** (TinyUSB, Pico-PIO-USB, tiny-AES-c, tinycrypt)
+3. **CMake** and **gcc-arm-none-eabi** toolchain
+
+### Build Steps
+
+```bash
+# Clone repository
+git clone <repository-url>
+cd hid-proxy
+
+# Initialize submodules
+git submodule update --init --recursive
+
+# Build
+mkdir build && cd build
+cmake ..
+make
+```
+
+This produces:
+- `hid_proxy.elf` - ELF binary for debugging
+- `hid_proxy.uf2` - UF2 file for bootloader flashing
+
+### Flashing Methods
+
+#### Method 1: Bootloader (easiest)
+1. Hold both shift keys + PAUSE simultaneously while device is running
+2. Device reboots into BOOTSEL mode
+3. Pico appears as USB drive `RPI-RP2`
+4. Copy `hid_proxy.uf2` to the drive
+
+#### Method 2: Debug Probe (OpenOCD)
+```bash
+openocd -f interface/cmsis-dap.cfg -f target/rp2040.cfg \
+  -c "adapter speed 5000" \
+  -c "program hid_proxy.elf verify reset exit"
+```
+
+#### Method 3: From IDE
+Run "ocd" debug configuration from CLion or your IDE.
+
+## Usage
+
+### Normal Operation
+
+By default, all keystrokes pass through transparently from the physical keyboard to the host computer.
+
+### Command Mode ("Double Shift")
+
+To access special functions:
+
+1. Press **both shift keys** simultaneously
+2. Release all keys
+3. Press one of the command keys below
+
+### Command Reference
+
+| Key     | Description                                                                                                                                           |
+|---------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `ENTER` | Start passphrase entry to unlock encrypted key definitions. Type your passphrase, then press `ENTER` again to submit.                                 |
+| `ESC`   | Cancel the current operation (e.g., exit passphrase entry or key definition mode).                                                                    |
+| `DEL`   | **Erase everything** - immediately deletes encryption key and all key definitions from flash. No confirmation prompt. Cannot be undone!               |
+| `END`   | Lock device and clear decrypted key definitions from memory. Encrypted data in flash is preserved. Re-enter passphrase (double-shift + `ENTER`) to unlock. |
+| `=`     | Start defining/redefining a key. Next keystroke is the trigger key, following keystrokes are the expansion. End with another double-shift.            |
+| `PRINT` | Write the current encryption key to an NFC tag (requires PN532 reader and Mifare Classic tag).                                                        |
+| `PAUSE` | *While holding both shifts:* Reboot into bootloader mode for flashing new firmware.                                                                   |
+
+### First-Time Setup
+
+A freshly flashed device starts in the **unlocked** state with no passphrase or key definitions.
+
+To set up encryption:
+1. **Double-shift** + `ENTER` to start setting a passphrase
+2. Type your desired passphrase (letters, numbers, symbols - any keys on your keyboard)
+3. Press `ENTER` to save
+4. The passphrase is used to derive an encryption key that protects your key definitions in flash
+
+**Important:**
+- Passphrases support any keyboard characters (keycodes only, not multi-byte Unicode)
+- If you enter the wrong passphrase when unlocking, the device stays locked with no visible feedback (check serial debug output for errors)
+- There's no password recovery - if you forget it, use double-shift + `DEL` to erase and start over
+
+### Example: Creating a Text Expansion
+
+Let's define the letter `m` to expand to "meeting@example.com":
+
+1. **Double-shift** (press both shifts, release all keys)
+2. Press `=` (enters definition mode)
+3. Press `m` (this is the trigger key)
+4. Type `meeting@example.com` (this is the expansion)
+5. **Double-shift** again to finish
+
+Now whenever you press `m` (while unlocked), it will type out "meeting@example.com".
+
+**Note:** Key definitions trigger on the keycode alone, ignoring modifier keys. So defining `m` will also trigger when you press Shift+M (instead of typing 'M').
+
+### Example: Using NFC Authentication
+
+NFC tags can store your encryption key for quick unlock without typing a passphrase.
+
+**Prerequisites:** You must have already set up a passphrase (see First-Time Setup above).
+
+1. **Store key to tag:**
+   - Ensure device is unlocked (if locked, double-shift + `ENTER`, type passphrase, `ENTER`)
+   - Place Mifare Classic tag on PN532 reader
+   - Double-shift + `PRINT`
+   - Encryption key is written to tag block 0x3A
+
+2. **Authenticate with tag:**
+   - When device is locked, place the NFC tag on the reader
+   - Device automatically reads key and unlocks (if tag contains valid key)
+   - No passphrase needed!
+
+## Debug/Serial Output
+
+Connect to serial console for debug output:
+
+```bash
 minicom -D /dev/ttyACM0 -b 115200
+```
 
-## Mac Keyboard
+Or use any serial terminal at 115200 baud on:
+- **Linux/Mac**: `/dev/ttyACM0` (or `/dev/ttyUSB0` for UART)
+- **Windows**: Check Device Manager for COM port
 
-rm /Library/Preferences/com.apple.keyboardtype.plist
-reboot
+## Troubleshooting
+
+### Mac Keyboard Setup Assistant Appears
+
+When connecting the device, macOS may show the Keyboard Setup Assistant. To reset:
+
+```bash
+sudo rm /Library/Preferences/com.apple.keyboardtype.plist
+sudo reboot
+```
+
+After reboot, go through the keyboard setup assistant when prompted.
+
+### Device Not Recognized
+
+1. Check both USB cables are connected properly
+2. Verify the physical keyboard works when connected directly to host
+3. Check debug serial output for errors
+4. Try reflashing the firmware
+
+### Key Definitions Not Working
+
+1. Ensure device is unlocked (double-shift + `ENTER`, enter passphrase)
+2. Check that key definition was saved (double-shift at end of definition)
+3. Verify not in locked state (auto-locks after 120 minutes)
+
+### Wrong Passphrase / Can't Unlock
+
+1. Device provides **no visual feedback** for wrong passphrase - it just stays locked
+2. Connect to serial console (see Debug/Serial Output section) to check for "Could not decrypt" errors
+3. If you've forgotten the passphrase:
+   - Double-shift + `DEL` to erase everything and start over
+   - Warning: This permanently deletes all key definitions
+
+### NFC Not Working
+
+1. Verify wiring: SDA → GPIO 4, SCL → GPIO 5, 3.3V power
+2. Check PN532 is in I2C mode (DIP switches)
+3. Use Mifare Classic tags (not Ultralight or DESFire)
+4. Ensure tag is positioned correctly on reader
+
+### Queue Full Panic
+
+If you see "Queue is full" errors:
+- You may be sending key definitions too fast
+- Try shorter expansions or slower typing
+- Known issue - see BUGS.md #13
+
+## Configuration
+
+Key constants in `hid_proxy.h`:
+
+| Constant                | Value      | Description                           |
+|-------------------------|------------|---------------------------------------|
+| `FLASH_STORE_OFFSET`    | 512 KB     | Flash location for encrypted data     |
+| `FLASH_STORE_SIZE`      | 4 KB       | Maximum size for key definitions      |
+| `IDLE_TIMEOUT_MILLIS`   | 120 min    | Auto-lock timeout                     |
+
+## Known Issues
+
+See **BUGS.md** for a comprehensive list of 34+ bugs including:
+- Buffer overflows (#1, #2, #7, #14, #15)
+- Race conditions (#3, #12)
+- Memory safety issues (#5, #8-11)
+- Weak encryption (#31, #32, #34)
+
+**This is proof-of-concept code only. Do not use with sensitive data.**
+
+## Technical Documentation
+
+For detailed technical information, see:
+- **CLAUDE.md** - Architecture, code locations, building instructions
+- **BUGS.md** - Comprehensive bug analysis
+
+## License
+
+[Add license information here]
+
+## Contributing
+
+This is a proof-of-concept project. Contributions welcome but please note the author has indicated the code would be rewritten before serious use.
