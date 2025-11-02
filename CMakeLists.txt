@@ -11,39 +11,32 @@ pico_sdk_init()
 
 # --- Firmware executable ---
 add_executable(hid_proxy
-        src/encryption.c  src/flash.c  src/hid_proxy.c  src/key_defs.c  src/macros.c  src/msc_disk.c  src/nfc_tag.c  src/sane.c  src/test_parser.c  src/usb_descriptors.c  src/usb_host.c
+        src/encryption.c
+        src/flash.c
+        src/hid_proxy.c
+        src/key_defs.c
+        src/macros.c
+        src/msc_disk.c
+        src/nfc_tag.c
+        src/sane.c
+        src/usb_descriptors.c
+        src/usb_host.c
 )
 
 # --- Include directories ---
 target_include_directories(hid_proxy PRIVATE
         include
         $ENV{PICO_LIBS_PATH}/tiny-AES-c
-        $ENV{PICO_LIBS_PATH}/pn532-lib
-        $ENV{PICO_LIBS_PATH}/Adafruit-PN532
-        $ENV{PICO_LIBS_PATH}/tinycrypt
+        $ENV{PICO_LIBS_PATH}/tinycrypt/lib/include/
 )
 
-# --- Libraries without CMakeLists.txt (static from sources) ---
-# pn532-lib
-file(GLOB PN532_SOURCES
-        $ENV{PICO_LIBS_PATH}/pn532-lib/*.c
-)
-add_library(pn532-lib STATIC ${PN532_SOURCES})
-target_include_directories(pn532-lib PUBLIC $ENV{PICO_LIBS_PATH}/pn532-lib)
-
-# Adafruit-PN532
-file(GLOB ADAFRUIT_PN532_SOURCES
-        $ENV{PICO_LIBS_PATH}/Adafruit-PN532/*.c
-)
-add_library(Adafruit-PN532 STATIC ${ADAFRUIT_PN532_SOURCES})
-target_include_directories(Adafruit-PN532 PUBLIC $ENV{PICO_LIBS_PATH}/Adafruit-PN532)
 
 # tinycrypt
-file(GLOB TINYCRYPT_SOURCES
-        $ENV{PICO_LIBS_PATH}/tinycrypt/*.c
+file(GLOB_RECURSE TINYCRYPT_SOURCES
+        $ENV{PICO_LIBS_PATH}/tinycrypt/lib/*.c
 )
 add_library(tinycrypt STATIC ${TINYCRYPT_SOURCES})
-target_include_directories(tinycrypt PUBLIC $ENV{PICO_LIBS_PATH}/tinycrypt/include)
+target_include_directories(tinycrypt PUBLIC $ENV{PICO_LIBS_PATH}/tinycrypt/lib)
 
 # --- Libraries with CMakeLists.txt ---
 add_subdirectory($ENV{PICO_LIBS_PATH}/tiny-AES-c tiny-AES-c)
@@ -54,8 +47,6 @@ target_link_libraries(hid_proxy
         pico_stdlib
         tiny-AES-c
         tinycrypt
-        pn532-lib
-        Adafruit-PN532
         pico_pio_usb
         tinyusb_board
 )
