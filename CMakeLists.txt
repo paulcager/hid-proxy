@@ -1,106 +1,65 @@
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.18)
 
-include (pico_sdk_import.cmake)
-project(hid_proxy)
+# Project name
+project(hid_proxy C CXX ASM)
 
-set(TINYUSB_MSC_ENABLED 1)
+# --- Pico SDK ---
+if(NOT DEFINED PICO_SDK_PATH)
+    message(FATAL_ERROR "PICO_SDK_PATH is not set. Set it to the path of pico-sdk")
+endif()
+include($ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake)
 
+# Initialize the SDK
 pico_sdk_init()
 
-add_subdirectory("./Pico-PIO-USB" pico_pio_usb)
-
+# --- Define firmware executable ---
 add_executable(hid_proxy
-        hid_proxy.c
-        flash.c
-        hid_proxy.h
-        key_defs.c
-        logging.h
-        encryption.c
-        encryption.h
-        tiny-AES-c/aes.c
-        sane.c
-        tinycrypt/lib/source/sha256.c
-        tinycrypt/lib/source/utils.c
-        nfc_tag.c
-        usb_host.c
-        usb_host.h
-        msc_disk.c
+        src/main.c
+        src/hid_proxy.c
+        # Add other RP2040-dependent source files here
+        src/usb_iface_pico.c  # RP2040-specific wrapper
 )
 
-target_sources(hid_proxy PUBLIC
-        ${CMAKE_CURRENT_LIST_DIR}/hid_proxy
-        ${CMAKE_CURRENT_LIST_DIR}/usb_descriptors.c
-        # I have copied the following from the samples, without understanding why.
-        # can use 'tinyusb_pico_pio_usb' library later when pico-sdk is updated
-        ${PICO_TINYUSB_PATH}/src/portable/raspberrypi/pio_usb/dcd_pio_usb.c
-        ${PICO_TINYUSB_PATH}/src/portable/raspberrypi/pio_usb/hcd_pio_usb.c
-        /usr/local/picosdk/lib/tinyusb/src/class/msc/msc_device.c
-        )
-
-# Make sure TinyUSB can find tusb_config.h
-target_include_directories(hid_proxy PUBLIC
-        ${CMAKE_CURRENT_LIST_DIR}
-        tinycrypt/lib/include
+# --- Include directories ---
+target_include_directories(hid_proxy PRIVATE
+        include
+        $ENV{PICO_LIBS_PATH}/tiny-AES-c
+        $ENV{PICO_LIBS_PATH}/pn532-lib
+        $ENV{PICO_LIBS_PATH}/Adafruit-PN532
+        $ENV{PICO_LIBS_PATH}/tinycrypt
 )
 
-target_link_libraries(hid_proxy PUBLIC
+# --- Link submodules ---
+add_subdirectory($ENV{PICO_LIBS_PATH}/tiny-AES-c tiny-AES-c)
+add_subdirectory($ENV{PICO_LIBS_PATH}/pn532-lib pn532-lib)
+add_subdirectory($ENV{PICO_LIBS_PATH}/Adafruit-PN532 Adafruit-PN532)
+add_subdirectory($ENV{PICO_LIBS_PATH}/tinycrypt tinycrypt)
+add_subdirectory($ENV{PICO_PIO_USB_PATH} pico_pio_usb)
+
+target_link_libraries(hid_proxy
         pico_stdlib
-        pico_flash
-        pico_rand
-        pico_time
-        hardware_flash
-        hardware_i2c
-        hardware_exception
+        tiny-AES-c
+        pn532-lib
+        Adafruit-PN532
+        tinycrypt
         pico_pio_usb
-        tinyusb_device
-        tinyusb_board
-        tinyusb_host
+        tinyusb_board   # Built-in from Pico SDK
 )
 
+# --- Enable USB output and RP2040 features ---
+pico_enable_stdio_usb(hid_proxy 1)
+pico_enable_stdio_uart(hid_proxy 0)
 pico_add_extra_outputs(hid_proxy)
 
-# Add a separate executable for running tests
-add_executable(parser_tests
-        test_parser.c
-        macros.c
-        key_defs.c
-        # The following are needed for next_keydef and other helpers
-        encryption.c
-        tiny-AES-c/aes.c
-        tinycrypt/lib/source/sha256.c
-        tinycrypt/lib/source/utils.c
-        flash.c
-        nfc_tag.c
-        sane.c
+# --- Host-side unit tests ---
+enable_testing()
+add_executable(test_core
+        tests/test_core_logic.c
+        src/hid_proxy.c        # Pure C logic
+        src/usb_iface_fake.c   # RP2040 stubs for host
 )
 
-target_include_directories(parser_tests PUBLIC
-        ${CMAKE_CURRENT_LIST_DIR}
-        tinycrypt/lib/include
-)
+target_include_directories(test_core PRIVATE include)
+target_link_libraries(test_core tiny-AES-c pn532-lib Adafruit-PN532 tinycrypt)
 
-target_link_libraries(parser_tests PUBLIC
-        pico_stdlib
-        pico_flash
-        pico_rand
-        pico_time
-        hardware_flash
-        hardware_i2c
-        hardware_exception
-        tinyusb_device
-)
-
-pico_add_extra_outputs(parser_tests)
-# TODO - disable USB stdio for prod build.
-# TODO - also need to modify pcio SDK src/rp2_common/pico_stdio_usb/stdio_usb.c to remove `#ifndef LIB_TINYUSB_HOST`
-pico_enable_stdio_usb(hid_proxy 0)
-pico_enable_stdio_uart(hid_proxy 1)
-
-target_compile_definitions(hid_proxy PRIVATE
-# Can move the UART0 ports like so:
-#        PICO_DEFAULT_UART_RX_PIN=16
-#        PICO_DEFAULT_UART_TX_PIN=17
-        PN532DEBUG=1
-        DEBUG_SERIAL=Serial
-)
-
+add_test(NAME unit_tests COMMAND test_core)
