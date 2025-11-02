@@ -74,11 +74,20 @@ add_executable(parser_tests
         sane.c
 )
 
+target_include_directories(parser_tests PUBLIC
+        ${CMAKE_CURRENT_LIST_DIR}
+        tinycrypt/lib/include
+)
+
 target_link_libraries(parser_tests PUBLIC
         pico_stdlib
+        pico_flash
+        pico_rand
+        pico_time
         hardware_flash
+        hardware_i2c
+        hardware_exception
         tinyusb_device
-        tinyusb_interface
 )
 
 pico_add_extra_outputs(parser_tests)
