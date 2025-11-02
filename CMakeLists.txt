@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.13)
-set(PICO_SDK_PATH /home/paul/pico/pico-sdk)
+
 include (pico_sdk_import.cmake)
 project(hid_proxy)
+
+set(TINYUSB_MSC_ENABLED 1)
 
 pico_sdk_init()
 
@@ -22,6 +24,7 @@ add_executable(hid_proxy
         nfc_tag.c
         usb_host.c
         usb_host.h
+        msc_disk.c
 )
 
 target_sources(hid_proxy PUBLIC
@@ -31,6 +34,7 @@ target_sources(hid_proxy PUBLIC
         # can use 'tinyusb_pico_pio_usb' library later when pico-sdk is updated
         ${PICO_TINYUSB_PATH}/src/portable/raspberrypi/pio_usb/dcd_pio_usb.c
         ${PICO_TINYUSB_PATH}/src/portable/raspberrypi/pio_usb/hcd_pio_usb.c
+        /usr/local/picosdk/lib/tinyusb/src/class/msc/msc_device.c
         )
 
 # Make sure TinyUSB can find tusb_config.h
@@ -55,6 +59,29 @@ target_link_libraries(hid_proxy PUBLIC
 
 pico_add_extra_outputs(hid_proxy)
 
+# Add a separate executable for running tests
+add_executable(parser_tests
+        test_parser.c
+        macros.c
+        key_defs.c
+        # The following are needed for next_keydef and other helpers
+        encryption.c
+        tiny-AES-c/aes.c
+        tinycrypt/lib/source/sha256.c
+        tinycrypt/lib/source/utils.c
+        flash.c
+        nfc_tag.c
+        sane.c
+)
+
+target_link_libraries(parser_tests PUBLIC
+        pico_stdlib
+        hardware_flash
+        tinyusb_device
+        tinyusb_interface
+)
+
+pico_add_extra_outputs(parser_tests)
 # TODO - disable USB stdio for prod build.
 # TODO - also need to modify pcio SDK src/rp2_common/pico_stdio_usb/stdio_usb.c to remove `#ifndef LIB_TINYUSB_HOST`
 pico_enable_stdio_usb(hid_proxy 0)

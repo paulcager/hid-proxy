@@ -25,14 +25,12 @@
 #ifndef USB_DESCRIPTORS_H_
 #define USB_DESCRIPTORS_H_
 
-enum {
-    ITF_NUM_KEYBOARD = 0,
-    ITF_NUM_MOUSE,
-#ifdef LIB_PICO_STDIO_USB
-    ITF_NUM_CDC,
-    ITF_NUM_CDC_DATA,
-#endif
-    ITF_NUM_TOTAL
-};
+#define ITF_NUM_KEYBOARD        0
+#define ITF_NUM_MOUSE           1
+#define ITF_NUM_MSC             2
+#define ITF_NUM_TOTAL           3
+
+#define EPNUM_MSC_OUT           0x01
+#define EPNUM_MSC_IN            0x81
 
 #endif /* USB_DESCRIPTORS_H_ */
