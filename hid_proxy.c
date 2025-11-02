@@ -34,6 +34,7 @@
 #include "pico/util/queue.h"
 #include "pico/multicore.h"
 #include "hardware/clocks.h"
+#include "hardware/watchdog.h"
 
 #include "pio_usb.h"
 #include "tusb.h"
@@ -44,6 +45,7 @@
 #include "encryption.h"
 #include "usb_host.h"
 
+uint32_t __attribute__((section(".uninit_data"))) msc_boot_mode_flag;
 
 // Reminders:
 // Latest is ~/pico/hid-proxy2/build
@@ -72,6 +74,25 @@ queue_t leds_queue;
 int main(void) {
     // default 125MHz is not appropriate for PIO. Sysclock should be multiple of 12MHz.
     set_sys_clock_khz(120000, true);
+
+    // Check for MSC Boot Mode
+    if (msc_boot_mode_flag == MSC_BOOT_MAGIC) {
+        // Clear the magic value to ensure we boot normally next time
+        msc_boot_mode_flag = 0;
+
+        LOG_INFO("MSC Boot Mode detected. Starting TinyUSB as MSC device.\n");
+
+        // Initialize TinyUSB as only MSC device
+        tud_init(0);
+        stdio_init_all();
+
+        while (true) {
+            tud_task(); // tinyusb device task
+            tud_cdc_write_flush();
+        }
+
+        return 0; // Should not reach here
+    }
 
     nfc_setup();
 

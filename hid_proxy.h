@@ -17,6 +17,9 @@
 
 #define FLASH_STORE_ADDRESS ((void*)(XIP_BASE + FLASH_STORE_OFFSET))
 
+// Magic value to signal MSC boot mode
+#define MSC_BOOT_MAGIC 0xDEADBEEF
+
 // The number of milliseconds without any keyboard input after which we'll
 // clear the plain-text storage, requiring re-input of the passphrase.
 #define IDLE_TIMEOUT_MILLIS ((int64_t)(120 * 60 * 1000))

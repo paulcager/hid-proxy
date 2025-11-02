@@ -20,8 +20,11 @@ add_executable(hid_proxy
         tinycrypt/lib/source/sha256.c
         tinycrypt/lib/source/utils.c
         nfc_tag.c
+        macros.c
         usb_host.c
         usb_host.h
+        macros.c
+        macros.c
 )
 
 target_sources(hid_proxy PUBLIC

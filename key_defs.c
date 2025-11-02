@@ -1,9 +1,12 @@
 #include <pico/multicore.h>
 #include <pico/bootrom.h>
+#include <hardware/watchdog.h>
 #include "hid_proxy.h"
 #include "usb_descriptors.h"
 #include "encryption.h"
 #include "nfc_tag.h"
+
+extern uint32_t msc_boot_mode_flag;
 
 static hid_keyboard_report_t release_all_keys = {0, 0, {0, 0, 0, 0, 0, 0}};
 
@@ -32,6 +35,13 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
     if (kb_report->modifier == 0x22 && key0 == HID_KEY_PAUSE) {
         multicore_reset_core1();
         reset_usb_boot(0,0);
+        return;
+    }
+
+    // New: double-shift + Equal means reboot into MSC mode.
+    if (kb_report->modifier == 0x22 && key0 == HID_KEY_EQUAL) {
+        msc_boot_mode_flag = MSC_BOOT_MAGIC;
+        watchdog_reboot(0, 0, 0);
         return;
     }
 
