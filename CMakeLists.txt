@@ -1,57 +1,70 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.13)
+set(PICO_SDK_PATH /home/paul/pico/pico-sdk)
+include (pico_sdk_import.cmake)
+project(hid_proxy)
 
-project(hid_proxy C CXX ASM)
-
-# --- Pico SDK ---
-if(NOT DEFINED PICO_SDK_PATH)
-    set(PICO_SDK_PATH "/opt/pico-sdk")
-endif()
-include($ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake)
 pico_sdk_init()
 
-# --- Firmware executable ---
+add_subdirectory("./Pico-PIO-USB" pico_pio_usb)
+
 add_executable(hid_proxy
-        src/encryption.c
-        src/flash.c
         src/hid_proxy.c
+        src/flash.c
+        include/hid_proxy.h
         src/key_defs.c
-        src/macros.c
-        src/msc_disk.c
-        src/nfc_tag.c
+        include/logging.h
+        src/encryption.c
+        include/encryption.h
+        tiny-AES-c/aes.c
         src/sane.c
-        src/usb_descriptors.c
+        tinycrypt/lib/source/sha256.c
+        tinycrypt/lib/source/utils.c
+        src/nfc_tag.c
         src/usb_host.c
+        include/usb_host.h
 )
 
-# --- Include directories ---
-target_include_directories(hid_proxy PRIVATE
-        include
-        $ENV{PICO_LIBS_PATH}/tiny-AES-c
-        $ENV{PICO_LIBS_PATH}/tinycrypt/lib/include/
+target_sources(hid_proxy PUBLIC
+        ${CMAKE_CURRENT_LIST_DIR}/hid_proxy
+        ${CMAKE_CURRENT_LIST_DIR}/usb_descriptors.c
+        # I have copied the following from the samples, without understanding why.
+        # can use 'tinyusb_pico_pio_usb' library later when pico-sdk is updated
+        ${PICO_TINYUSB_PATH}/src/portable/raspberrypi/pio_usb/dcd_pio_usb.c
+        ${PICO_TINYUSB_PATH}/src/portable/raspberrypi/pio_usb/hcd_pio_usb.c
+        )
+
+# Make sure TinyUSB can find tusb_config.h
+target_include_directories(hid_proxy PUBLIC
+        ${CMAKE_CURRENT_LIST_DIR}
+        tinycrypt/lib/include
 )
 
-
-# tinycrypt
-file(GLOB_RECURSE TINYCRYPT_SOURCES
-        $ENV{PICO_LIBS_PATH}/tinycrypt/lib/*.c
-)
-add_library(tinycrypt STATIC ${TINYCRYPT_SOURCES})
-target_include_directories(tinycrypt PUBLIC $ENV{PICO_LIBS_PATH}/tinycrypt/lib)
-
-# --- Libraries with CMakeLists.txt ---
-add_subdirectory($ENV{PICO_LIBS_PATH}/tiny-AES-c tiny-AES-c)
-add_subdirectory($ENV{PICO_PIO_USB_PATH} pico_pio_usb)
-
-# --- Link libraries to firmware ---
-target_link_libraries(hid_proxy
+target_link_libraries(hid_proxy PUBLIC
         pico_stdlib
-        tiny-AES-c
-        tinycrypt
+        pico_flash
+        pico_rand
+        pico_time
+        hardware_flash
+        hardware_i2c
+        hardware_exception
         pico_pio_usb
+        tinyusb_device
         tinyusb_board
+        tinyusb_host
 )
 
-# --- Enable USB stdio on Pico ---
-pico_enable_stdio_usb(hid_proxy 1)
-pico_enable_stdio_uart(hid_proxy 0)
 pico_add_extra_outputs(hid_proxy)
+
+# TODO - disable USB stdio for prod build.
+# TODO - also need to modify pcio SDK src/rp2_common/pico_stdio_usb/stdio_usb.c to remove `#ifndef LIB_TINYUSB_HOST`
+pico_enable_stdio_usb(hid_proxy 0)
+pico_enable_stdio_uart(hid_proxy 1)
+
+target_compile_definitions(hid_proxy PRIVATE
+# Can move the UART0 ports like so:
+#        PICO_DEFAULT_UART_RX_PIN=16
+#        PICO_DEFAULT_UART_TX_PIN=17
+        PN532DEBUG=1
+        DEBUG_SERIAL=Serial
+)
+
