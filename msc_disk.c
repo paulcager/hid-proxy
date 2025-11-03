@@ -29,7 +29,9 @@
 #include "macros.h" // For serialize_macros and parse_macros
 
 // A static RAM buffer to hold the content of our virtual disk (macros.txt)
-static char msc_disk_buffer[FLASH_STORE_SIZE];
+// 23KB buffer to handle text expansion (text is ~3.8x larger than binary format)
+#define MSC_DISK_BUFFER_SIZE (23 * 1024)
+static char msc_disk_buffer[MSC_DISK_BUFFER_SIZE];
 
 // Invoked when received SCSI Inquiry command
 // Application fill vendor id, product id, revision and Correspondent capacity
@@ -63,7 +65,7 @@ void tud_msc_capacity_cb(uint8_t lun, uint32_t* block_count, uint16_t* block_siz
 {
   (void) lun;
 
-  *block_count = FLASH_STORE_SIZE / 512; // Our virtual disk size in 512-byte blocks
+  *block_count = MSC_DISK_BUFFER_SIZE / 512; // Our virtual disk size in 512-byte blocks
   *block_size = 512; // Standard block size
 }
 
@@ -78,7 +80,14 @@ bool tud_msc_start_stop_cb(uint8_t lun, uint8_t command, bool start, bool load_e
   if (start)
   {
     // start command: populate the buffer with current macros from flash
-    serialize_macros((const store_t*)FLASH_STORE_ADDRESS, msc_disk_buffer, sizeof(msc_disk_buffer));
+    memset(msc_disk_buffer, 0, sizeof(msc_disk_buffer));
+    if (!serialize_macros((const store_t*)FLASH_STORE_ADDRESS, msc_disk_buffer, sizeof(msc_disk_buffer))) {
+        LOG_ERROR("MSC: Failed to serialize macros - buffer too small!\n");
+        // Fill buffer with error message
+        snprintf(msc_disk_buffer, sizeof(msc_disk_buffer),
+                 "# ERROR: Too many macros to display!\n"
+                 "# Please reduce the number of macros in HID mode first.\n");
+    }
   }
   else
   {
@@ -107,8 +116,8 @@ int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset, void* buff
   uint32_t const disk_addr = lba * 512 + offset;
 
   // Ensure we don't read beyond our virtual disk size
-  if (disk_addr + bufsize > FLASH_STORE_SIZE) {
-      bufsize = FLASH_STORE_SIZE - disk_addr;
+  if (disk_addr + bufsize > MSC_DISK_BUFFER_SIZE) {
+      bufsize = MSC_DISK_BUFFER_SIZE - disk_addr;
   }
 
   memcpy(buffer, msc_disk_buffer + disk_addr, bufsize);
@@ -125,8 +134,8 @@ int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset, uint8_t* 
   uint32_t const disk_addr = lba * 512 + offset;
 
   // Ensure we don't write beyond our virtual disk size
-  if (disk_addr + bufsize > FLASH_STORE_SIZE) {
-      bufsize = FLASH_STORE_SIZE - disk_addr;
+  if (disk_addr + bufsize > MSC_DISK_BUFFER_SIZE) {
+      bufsize = MSC_DISK_BUFFER_SIZE - disk_addr;
   }
 
   memcpy(msc_disk_buffer + disk_addr, buffer, bufsize);

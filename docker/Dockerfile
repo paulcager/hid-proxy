@@ -19,38 +19,24 @@ WORKDIR /opt
 RUN git clone -b master https://github.com/raspberrypi/pico-sdk.git && \
     cd pico-sdk && git submodule update --init
 
-# --- Pico Examples ---
-RUN git clone -b master https://github.com/raspberrypi/pico-examples.git && \
-    cd pico-sdk && git submodule update --init
-
-# --- Common libs directory ---
-RUN mkdir -p /opt/pico-libs
-WORKDIR /opt/pico-libs
-
-# tiny-AES-c
-RUN git clone https://github.com/kokke/tiny-AES-c.git
-
-# Adafruit-PN532 (use HTTPS instead of SSH)
-RUN git clone https://github.com/adafruit/Adafruit-PN532.git
-
-# pn532-lib (convert SSH → HTTPS)
-RUN git clone https://github.com/paulcager/pn532-lib.git
-
-# tinycrypt (convert SSH → HTTPS)
-RUN git clone https://github.com/intel/tinycrypt.git
-
-# Pico-PIO-USB (original sekigon-gonnoc repo)
-RUN git clone https://github.com/sekigon-gonnoc/Pico-PIO-USB.git && \
-    cd Pico-PIO-USB && git submodule update --init
-
 # Environment vars for CMake
 ENV PICO_SDK_PATH=/opt/pico-sdk
-ENV PICO_LIBS_PATH=/opt/pico-libs
-ENV PICO_PIO_USB_PATH=/opt/pico-libs/Pico-PIO-USB
 
-# Optional: add extras & tinyusb if you want later
-# ENV PICO_EXTRAS_PATH=/opt/pico-extras
-# ENV PICO_TINYUSB_PATH=/opt/tinyusb
+# Pre-compile SDK components by building a minimal example
+# This caches TinyUSB and other SDK libraries to speed up first project build
+WORKDIR /tmp/prebuild
+RUN echo 'cmake_minimum_required(VERSION 3.13)\n\
+set(PICO_SDK_PATH /opt/pico-sdk)\n\
+include($ENV{PICO_SDK_PATH}/pico_sdk_init.cmake)\n\
+project(prebuild C CXX ASM)\n\
+pico_sdk_init()\n\
+add_executable(prebuild main.c)\n\
+target_link_libraries(prebuild pico_stdlib)\n\
+pico_add_extra_outputs(prebuild)' > CMakeLists.txt && \
+    echo '#include "pico/stdlib.h"\nint main() { return 0; }' > main.c && \
+    mkdir build && cd build && \
+    cmake .. && make -j$(nproc) && \
+    cd / && rm -rf /tmp/prebuild
 
 # Create dev user
 RUN useradd -ms /bin/bash builder

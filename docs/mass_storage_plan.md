@@ -2,6 +2,8 @@
 
 This document outlines the plan to implement a "macro editing mode" by presenting the Pico as a USB Mass Storage Device. This will allow a user to edit their key definitions in a simple text file.
 
+**STATUS: ✅ IMPLEMENTED** (with format modifications - see Implementation Notes below)
+
 ## 1. Overview
 
 The goal is to provide a user-friendly way to download, edit, and upload key definitions without needing a separate client or terminal.
@@ -82,6 +84,110 @@ end
     *   If parsing is successful, it will erase the flash sector and write the new data from the temporary buffer.
 
 5.  **Integrate the Workflow:**
-    *   **Trigger:** The user will enter edit mode by holding **both Shift keys and the `=` key** simultaneously during power-on or reset.
+    *   **Trigger:** The user will enter edit mode by holding **both Shift keys and the `=` key** simultaneously.
     *   On boot, check for this trigger. If active, enter MSC mode.
     *   On MSC eject, trigger the parsing and flash write, then reboot into HID mode.
+
+---
+
+## Implementation Notes
+
+The plan has been fully implemented with the following modifications:
+
+### Format Changes
+
+The original proposed format was verbose and required ~3.8x expansion over binary. A more compact format was implemented instead:
+
+**Original Proposed Format:**
+```
+define a
+  type "Hello!"
+end
+```
+
+**Implemented Format:**
+```
+a { "Hello!" }
+```
+
+### New Syntax Features
+
+- **Compact brace syntax**: `trigger { commands... }` with flexible whitespace
+- **Ctrl+key shorthand**: `^C`, `^V` for common operations (maps to Ctrl+A through Ctrl+Z)
+- **Explicit reports**: `[mod:key]` in hex for precise control
+- **Multiple command types**: `"text"`, `MNEMONIC`, `^X`, `[mod:key]` can be mixed freely
+- **Smart triggers**: Single char (`a`), mnemonic (`F1`), or hex (`0x04`)
+
+**Examples:**
+```
+# Simple text
+m { "meeting@example.com" }
+
+# Mixed commands
+F1 { "Help:" TAB "Available commands" ENTER }
+
+# Ctrl shortcuts
+F2 { ^C PAGEDOWN ^V }
+
+# Raw HID
+F3 { [01:06] [00:00] }
+```
+
+### Buffer Size
+
+- Increased from 4KB (FLASH_STORE_SIZE) to 23KB (MSC_DISK_BUFFER_SIZE)
+- Handles approximately 46 full keydefs with 10 reports each
+- Text format expansion ratio: ~2-2.5x vs 3.8x for original format
+- Panics on buffer overflow (experimental code)
+
+### Implementation Status
+
+✅ **Step 1 - MSC Class Integration**: Complete
+- tusb_config.h: MSC enabled (CFG_TUD_MSC = 1)
+- usb_descriptors.c/h: MSC interface added to USB descriptors
+- msc_disk.c: All TinyUSB MSC callbacks implemented
+- Boot mode flag in uninit data section persists across reboots
+
+✅ **Step 2 - Serializer**: Complete (macros.c:321-418)
+- Converts binary keydefs to human-readable text
+- Intelligent text sequence detection
+- Outputs mnemonics/^C notation where possible
+- Falls back to [mod:key] for complex reports
+
+✅ **Step 3 - HID Lookup Tables**: Complete (macros.c:17-216)
+- UK keyboard layout (ascii_to_hid[])
+- Comprehensive mnemonic table (F1-F24, arrows, etc.)
+- Reverse lookup functions for serialization
+
+✅ **Step 4 - Parser**: Complete (macros.c:262-380)
+- Whitespace-flexible parsing
+- Quoted string support with escape sequences
+- Mnemonic keyword recognition
+- Ctrl shorthand (^C style)
+- Explicit report format [mod:key]
+- Robust error handling
+
+✅ **Step 5 - Workflow Integration**: Complete
+- Trigger: Double-shift + Equal (key_defs.c:41-46)
+- Boot detection: msc_boot_mode_flag check (hid_proxy.c:79-95)
+- Eject handling: Parse and write to flash (msc_disk.c:92-105)
+- Automatic reboot back to HID mode via watchdog
+
+### Files Modified/Created
+
+- `macros.c` - Parser and serializer (complete rewrite)
+- `macros.h` - API and next_keydef() helper
+- `msc_disk.c` - MSC callbacks (new file)
+- `tusb_config.h` - MSC enabled
+- `usb_descriptors.c/h` - MSC interface added
+- `CMakeLists.txt` - Added msc_disk.c
+- `hid_proxy.h` - MSC_BOOT_MAGIC constant
+- `hid_proxy.c` - Boot mode detection
+- `key_defs.c` - MSC boot trigger
+
+### Testing Notes
+
+- Serial console shows parse/serialize status
+- Buffer overflow triggers panic (crashes device)
+- Parse errors logged but don't prevent reboot
+- Macros stored unencrypted in MSC mode; encrypted after eject

@@ -7,9 +7,6 @@
 [submodule "pn532-lib"]
 	path = pn532-lib
 	url = git@github.com:paulcager/pn532-lib.git
-[submodule "pico-arduino-compat"]
-	path = pico-arduino-compat
-	url = git@github.com:kholia/pico-arduino-compat.git
 [submodule "tinycrypt"]
 	path = tinycrypt
 	url = git@github.com:intel/tinycrypt.git

@@ -1,5 +1,19 @@
 cmake_minimum_required(VERSION 3.13)
-set(PICO_SDK_PATH /home/paul/pico/pico-sdk)
+
+# Allow PICO_SDK_PATH to be overridden by environment variable or command line
+# Priority: 1) CMake cache/command line, 2) Environment variable, 3) Default local path
+if(NOT PICO_SDK_PATH)
+    if(DEFINED ENV{PICO_SDK_PATH})
+        set(PICO_SDK_PATH $ENV{PICO_SDK_PATH})
+        message(STATUS "Using PICO_SDK_PATH from environment: ${PICO_SDK_PATH}")
+    else()
+        set(PICO_SDK_PATH /home/paul/pico/pico-sdk)
+        message(STATUS "Using default PICO_SDK_PATH: ${PICO_SDK_PATH}")
+    endif()
+else()
+    message(STATUS "Using PICO_SDK_PATH from cache: ${PICO_SDK_PATH}")
+endif()
+
 include (pico_sdk_import.cmake)
 project(hid_proxy)
 
@@ -21,10 +35,9 @@ add_executable(hid_proxy
         tinycrypt/lib/source/utils.c
         nfc_tag.c
         macros.c
+        msc_disk.c
         usb_host.c
         usb_host.h
-        macros.c
-        macros.c
 )
 
 target_sources(hid_proxy PUBLIC

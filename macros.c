@@ -215,108 +215,283 @@ static uint8_t lookup_mnemonic_keycode(const char* name) {
     return 0; // Not found
 }
 
-bool parse_macros(const char* input_buffer, store_t* temp_store) {
-    char line[256];
-    const char* p = input_buffer;
-    keydef_t* current_def = NULL;
+// Parse a trigger (before the '{')
+static uint8_t parse_trigger(const char** p) {
+    while (**p && isspace((unsigned char)**p)) (*p)++;
 
+    // Check for hex
+    if ((*p)[0] == '0' && (*p)[1] == 'x') {
+        uint8_t code = (uint8_t)strtol(*p, (char**)p, 16);
+        return code;
+    }
+
+    // Check for single ASCII char followed by space or '{'
+    if ((*p)[1] && (isspace((unsigned char)(*p)[1]) || (*p)[1] == '{')) {
+        uint8_t code = ascii_to_hid[(int)(*p)[0]].key;
+        (*p)++;
+        return code;
+    }
+
+    // Check for mnemonic
+    char mnemonic[32];
+    int i = 0;
+    while ((*p)[i] && !isspace((unsigned char)(*p)[i]) && (*p)[i] != '{' && i < 31) {
+        mnemonic[i] = (*p)[i];
+        i++;
+    }
+    mnemonic[i] = '\0';
+    *p += i;
+
+    return lookup_mnemonic_keycode(mnemonic);
+}
+
+// Add a report to the current definition
+static bool add_report(keydef_t* current_def, uint8_t mod, uint8_t key, void* limit) {
+    if ((void*)&current_def->reports[current_def->used + 1] >= limit) {
+        return false;
+    }
+    current_def->reports[current_def->used].modifier = mod;
+    current_def->reports[current_def->used].keycode[0] = key;
+    for (int i = 1; i < 6; i++) {
+        current_def->reports[current_def->used].keycode[i] = 0;
+    }
+    current_def->used++;
+    return true;
+}
+
+bool parse_macros(const char* input_buffer, store_t* temp_store) {
+    const char* p = input_buffer;
     void* ptr = temp_store->keydefs;
     void* limit = (void*)temp_store + FLASH_STORE_SIZE;
 
-    while (p && *p) {
-        const char* eol = strchr(p, '\n');
-        if (eol) {
-            memcpy(line, p, eol - p);
-            line[eol - p] = '\0';
-            p = eol + 1;
-        } else {
-            strcpy(line, p);
-            p = NULL;
+    while (*p) {
+        // Skip whitespace and comments
+        while (*p && (isspace((unsigned char)*p) || *p == '#')) {
+            if (*p == '#') {
+                while (*p && *p != '\n') p++;
+            } else {
+                p++;
+            }
         }
 
-        char* trimmed_line = line;
-        while (*trimmed_line && isspace((unsigned char)*trimmed_line)) trimmed_line++;
+        if (!*p) break;
 
-        if (*trimmed_line == '\0' || *trimmed_line == '#') continue;
+        // Parse trigger
+        uint8_t trigger = parse_trigger(&p);
 
-        if (strncmp(trimmed_line, "define ", 7) == 0) {
-            char* key_str = trimmed_line + 7;
-            uint8_t keycode = 0;
-            if (strlen(key_str) == 1) {
-                keycode = ascii_to_hid[(int)key_str[0]].key;
-            } else if (strncmp(key_str, "0x", 2) == 0) {
-                keycode = (uint8_t)strtol(key_str, NULL, 16);
+        // Skip to '{'
+        while (*p && *p != '{') p++;
+        if (*p != '{') break;
+        p++; // skip '{'
+
+        // Create new keydef
+        keydef_t* current_def = (keydef_t*)ptr;
+        current_def->keycode = trigger;
+        current_def->used = 0;
+
+        // Parse commands until '}'
+        while (*p && *p != '}') {
+            // Skip whitespace
+            while (*p && isspace((unsigned char)*p)) p++;
+            if (*p == '}') break;
+
+            if (*p == '"') {
+                // Quoted string
+                p++;
+                while (*p && *p != '"') {
+                    char ch = *p;
+                    if (ch == '\\' && p[1]) {
+                        p++;
+                        ch = *p;
+                    }
+
+                    hid_mapping_t mapping = ascii_to_hid[(int)ch];
+                    if (!add_report(current_def, mapping.mod, mapping.key, limit)) {
+                        panic("Buffer overflow in parser");
+                    }
+                    if (!add_report(current_def, 0x00, 0x00, limit)) {
+                        panic("Buffer overflow in parser");
+                    }
+                    p++;
+                }
+                if (*p == '"') p++;
+
+            } else if (*p == '^') {
+                // Ctrl+key shorthand
+                p++;
+                if (*p >= 'a' && *p <= 'z') {
+                    uint8_t key = 0x04 + (*p - 'a');
+                    if (!add_report(current_def, 0x01, key, limit)) {
+                        panic("Buffer overflow in parser");
+                    }
+                    p++;
+                } else if (*p >= 'A' && *p <= 'Z') {
+                    uint8_t key = 0x04 + (*p - 'A');
+                    if (!add_report(current_def, 0x01, key, limit)) {
+                        panic("Buffer overflow in parser");
+                    }
+                    p++;
+                }
+
+            } else if (*p == '[') {
+                // Explicit report [mod:key]
+                p++;
+                uint8_t mod = (uint8_t)strtol(p, (char**)&p, 16);
+                if (*p == ':') p++;
+                uint8_t key = (uint8_t)strtol(p, (char**)&p, 16);
+                if (*p == ']') p++;
+
+                if (!add_report(current_def, mod, key, limit)) {
+                    panic("Buffer overflow in parser");
+                }
+
             } else {
-                keycode = lookup_mnemonic_keycode(key_str);
-            }
+                // Mnemonic
+                char mnemonic[32];
+                int i = 0;
+                while (*p && !isspace((unsigned char)*p) && *p != '}' && *p != '"' && *p != '^' && *p != '[' && i < 31) {
+                    mnemonic[i] = *p;
+                    i++;
+                    p++;
+                }
+                mnemonic[i] = '\0';
 
-            current_def = (keydef_t*)ptr;
-            current_def->keycode = keycode;
-            current_def->used = 0;
-
-        } else if (strcmp(trimmed_line, "end") == 0) {
-            if (current_def) {
-                ptr += sizeof(keydef_t) + (current_def->used * sizeof(hid_keyboard_report_t));
-                current_def = NULL;
-            }
-        } else if (current_def) {
-            if ((void*)&current_def->reports[current_def->used + 2] > limit) {
-                break;
-            }
-
-            if (strncmp(trimmed_line, "type ", 5) == 0) {
-                char* str = trimmed_line + 5;
-                if (str[0] == '"' && str[strlen(str) - 1] == '"') {
-                    str[strlen(str) - 1] = '\0';
-                    str++;
-                    for (int i = 0; str[i]; i++) {
-                        hid_mapping_t mapping = ascii_to_hid[(int)str[i]];
-                        current_def->reports[current_def->used].modifier = mapping.mod;
-                        current_def->reports[current_def->used].keycode[0] = mapping.key;
-                        current_def->used++;
-                        current_def->reports[current_def->used].modifier = 0x00;
-                        current_def->reports[current_def->used].keycode[0] = 0x00;
-                        current_def->used++;
+                if (i > 0) {
+                    uint8_t key = lookup_mnemonic_keycode(mnemonic);
+                    if (key) {
+                        if (!add_report(current_def, 0x00, key, limit)) {
+                            panic("Buffer overflow in parser");
+                        }
                     }
                 }
-            } else if (strncmp(trimmed_line, "report ", 7) == 0) {
-                char* args = trimmed_line + 7;
-                char* mod_str = strstr(args, "mod=0x");
-                char* keys_str = strstr(args, "keys=0x");
-                if (mod_str && keys_str) {
-                    uint8_t mod = (uint8_t)strtol(mod_str + 6, NULL, 16);
-                    current_def->reports[current_def->used].modifier = mod;
-                    uint8_t key = (uint8_t)strtol(keys_str + 7, NULL, 16);
-                    current_def->reports[current_def->used].keycode[0] = key;
-                    current_def->used++;
-                }
             }
         }
+
+        if (*p == '}') p++;
+
+        // Move to next keydef slot
+        ptr += sizeof(keydef_t) + (current_def->used * sizeof(hid_keyboard_report_t));
     }
+
+    // Terminator
     ((keydef_t*)ptr)->keycode = 0;
 
     return true;
+}
+
+// Reverse lookup: find mnemonic for a keycode
+static const char* keycode_to_mnemonic(uint8_t keycode) {
+    for (size_t i = 0; i < sizeof(mnemonic_to_hid) / sizeof(mnemonic_to_hid[0]); i++) {
+        if (mnemonic_to_hid[i].keycode == keycode) {
+            return mnemonic_to_hid[i].name;
+        }
+    }
+    return NULL;
+}
+
+// Reverse lookup: find ASCII char for a keycode (without modifier)
+static char keycode_to_ascii(uint8_t keycode, uint8_t modifier) {
+    for (int c = 0; c < sizeof(ascii_to_hid) / sizeof(ascii_to_hid[0]); c++) {
+        if (ascii_to_hid[c].key == keycode && ascii_to_hid[c].mod == modifier) {
+            return (char)c;
+        }
+    }
+    return 0;
 }
 
 bool serialize_macros(const store_t* store, char* output_buffer, size_t buffer_size) {
     char* p = output_buffer;
     char* const limit = output_buffer + buffer_size;
 
-    p += snprintf(p, limit - p, "# Macros file generated by hid-proxy\n\n");
+    p += snprintf(p, limit - p, "# Macros file - Format: trigger { commands... }\n");
+    p += snprintf(p, limit - p, "# Commands: \"text\" MNEMONIC ^C [mod:key]\n\n");
+    if (p >= limit) panic("Buffer overflow in serializer header");
 
     for (const keydef_t* def = store->keydefs; def->keycode != 0 && (void*)def < (void*)store + FLASH_STORE_SIZE; def = next_keydef(def)) {
-        int written = snprintf(p, limit - p, "define 0x%02x\n", def->keycode);
-        if (written < 0 || p + written >= limit) return false; // Buffer full
+        // Write trigger (prefer mnemonic or ASCII)
+        const char* mnemonic = keycode_to_mnemonic(def->keycode);
+        char ascii = keycode_to_ascii(def->keycode, 0);
+
+        int written;
+        if (mnemonic) {
+            written = snprintf(p, limit - p, "%s { ", mnemonic);
+        } else if (ascii >= 32 && ascii <= 126) {
+            written = snprintf(p, limit - p, "%c { ", ascii);
+        } else {
+            written = snprintf(p, limit - p, "0x%02x { ", def->keycode);
+        }
+        if (written < 0 || p + written >= limit) panic("Buffer overflow in serializer");
         p += written;
 
-        for (int i = 0; i < def->used; i++) {
-            written = snprintf(p, limit - p, "  report mod=0x%02x keys=0x%02x\n", def->reports[i].modifier, def->reports[i].keycode[0]);
-            if (written < 0 || p + written >= limit) return false; // Buffer full
-            p += written;
+        // Serialize reports - try to detect text sequences
+        for (int i = 0; i < def->used; ) {
+            // Check if this is a printable character sequence (press + release pairs)
+            bool is_text_sequence = false;
+            int text_start = i;
+            int text_len = 0;
+
+            // Look for text sequences: press with ASCII, then release
+            while (i + 1 < def->used &&
+                   def->reports[i + 1].modifier == 0 &&
+                   def->reports[i + 1].keycode[0] == 0) {
+                char ch = keycode_to_ascii(def->reports[i].keycode[0], def->reports[i].modifier);
+                if (ch >= 32 && ch <= 126) {
+                    is_text_sequence = true;
+                    text_len++;
+                    i += 2; // Skip press and release
+                } else {
+                    break;
+                }
+            }
+
+            if (is_text_sequence && text_len > 0) {
+                // Output as quoted string
+                written = snprintf(p, limit - p, "\"");
+                if (written < 0 || p + written >= limit) panic("Buffer overflow in serializer");
+                p += written;
+
+                for (int j = text_start; j < text_start + text_len * 2; j += 2) {
+                    char ch = keycode_to_ascii(def->reports[j].keycode[0], def->reports[j].modifier);
+                    if (ch == '"' || ch == '\\') {
+                        written = snprintf(p, limit - p, "\\%c", ch);
+                    } else {
+                        written = snprintf(p, limit - p, "%c", ch);
+                    }
+                    if (written < 0 || p + written >= limit) panic("Buffer overflow in serializer");
+                    p += written;
+                }
+
+                written = snprintf(p, limit - p, "\" ");
+                if (written < 0 || p + written >= limit) panic("Buffer overflow in serializer");
+                p += written;
+            } else {
+                // Output as raw report or mnemonic or ^X notation
+                const hid_keyboard_report_t* rep = &def->reports[i];
+
+                // Check for Ctrl+key shorthand
+                if (rep->modifier == 0x01 && rep->keycode[0] >= 0x04 && rep->keycode[0] <= 0x1d) {
+                    char ctrl_char = 'a' + (rep->keycode[0] - 0x04);
+                    written = snprintf(p, limit - p, "^%c ", ctrl_char);
+                } else if (rep->modifier == 0 && rep->keycode[0] == 0) {
+                    // Release all - use explicit report format
+                    written = snprintf(p, limit - p, "[00:00] ");
+                } else {
+                    const char* key_mnemonic = keycode_to_mnemonic(rep->keycode[0]);
+                    if (rep->modifier == 0 && key_mnemonic) {
+                        written = snprintf(p, limit - p, "%s ", key_mnemonic);
+                    } else {
+                        written = snprintf(p, limit - p, "[%02x:%02x] ", rep->modifier, rep->keycode[0]);
+                    }
+                }
+
+                if (written < 0 || p + written >= limit) panic("Buffer overflow in serializer");
+                p += written;
+                i++;
+            }
         }
 
-        written = snprintf(p, limit - p, "end\n\n");
-        if (written < 0 || p + written >= limit) return false; // Buffer full
+        written = snprintf(p, limit - p, "}\n");
+        if (written < 0 || p + written >= limit) panic("Buffer overflow in serializer");
         p += written;
     }
 

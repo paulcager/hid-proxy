@@ -147,9 +147,15 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     return;
 
                 case HID_KEY_ENTER:
+                    // When unlocked, ENTER now starts capturing keystrokes to unlock (if locked).
+                    // Re-encryption moved to INSERT to avoid accidental data loss.
+                    kb.status = normal;
+                    return;
+
+                case HID_KEY_INSERT:
                     kb.status = entering_new_password;
                     enc_start_key_derivation();
-                    printf("Enter password\n");
+                    printf("Enter new password\n");
                     return;
 
                 case HID_KEY_DELETE:

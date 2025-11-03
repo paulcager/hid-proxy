@@ -83,14 +83,16 @@ uint8_t const * tud_descriptor_device_cb(void)
 
 #define EPNUM_KEYBOARD         0x83
 #define EPNUM_MOUSE            0x84
+#define EPNUM_MSC_OUT          0x05
+#define EPNUM_MSC_IN           0x85
 
 #ifdef LIB_PICO_STDIO_USB
 #define EPNUM_CDC_NOTIF        0x81
 #define EPNUM_CDC_OUT          0x02
 #define EPNUM_CDC_IN           0x82
-#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + (2*TUD_HID_DESC_LEN) + TUD_CDC_DESC_LEN)
+#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + (2*TUD_HID_DESC_LEN) + TUD_CDC_DESC_LEN + TUD_MSC_DESC_LEN)
 #else
-#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + (2*TUD_HID_DESC_LEN))
+#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + (2*TUD_HID_DESC_LEN) + TUD_MSC_DESC_LEN)
 #endif
 
 //--------------------------------------------------------------------+
@@ -130,6 +132,9 @@ uint8_t const desc_fs_configuration[] =
   TUD_HID_DESCRIPTOR(ITF_NUM_KEYBOARD, 0, HID_ITF_PROTOCOL_KEYBOARD, sizeof(desc_hid_keyboard_report), EPNUM_KEYBOARD, CFG_TUD_HID_EP_BUFSIZE, 5),
   TUD_HID_DESCRIPTOR(ITF_NUM_MOUSE,    0, HID_ITF_PROTOCOL_MOUSE,    sizeof(desc_hid_mouse_report),    EPNUM_MOUSE,    CFG_TUD_HID_EP_BUFSIZE, 5),
 
+  // Interface number, string index, EP Out & In address, EP size
+  TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, 5, EPNUM_MSC_OUT, EPNUM_MSC_IN, 64),
+
 #ifdef LIB_PICO_STDIO_USB
   // Interface number, string index, EP notification address and size, EP data address (out, in) and size.
   TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 4, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
@@ -161,6 +166,7 @@ char const* string_desc_arr [] =
 #ifdef LIB_PICO_STDIO_USB
   "TinyUSB CDC",                 // 4: CDC Interface
 #endif
+  "Macro Storage",               // 5: MSC Interface
 };
 
 static uint16_t desc_str[32];

@@ -16,6 +16,7 @@ This is a proof-of-concept and has many bodges, including:
 
 - **Pass-through mode**: Keystrokes normally pass directly from physical keyboard to host
 - **Text expansion**: Define single keystrokes that expand to sequences (macros)
+- **Mass storage editing**: Edit macros in a text file by mounting device as USB drive
 - **Encrypted storage**: Key definitions stored encrypted in flash memory
 - **Passphrase unlock**: Decrypt key definitions with password
 - **NFC authentication**: Optionally store/read encryption keys from NFC tags
@@ -121,22 +122,23 @@ To access special functions:
 
 ### Command Reference
 
-| Key     | Description                                                                                                                                           |
-|---------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `ENTER` | Start passphrase entry to unlock encrypted key definitions. Type your passphrase, then press `ENTER` again to submit.                                 |
-| `ESC`   | Cancel the current operation (e.g., exit passphrase entry or key definition mode).                                                                    |
-| `DEL`   | **Erase everything** - immediately deletes encryption key and all key definitions from flash. No confirmation prompt. Cannot be undone!               |
-| `END`   | Lock device and clear decrypted key definitions from memory. Encrypted data in flash is preserved. Re-enter passphrase (double-shift + `ENTER`) to unlock. |
-| `=`     | Start defining/redefining a key. Next keystroke is the trigger key, following keystrokes are the expansion. End with another double-shift.            |
-| `PRINT` | Write the current encryption key to an NFC tag (requires PN532 reader and Mifare Classic tag).                                                        |
-| `PAUSE` | *While holding both shifts:* Reboot into bootloader mode for flashing new firmware.                                                                   |
+| Key      | Description                                                                                                                                                  |
+|----------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `ENTER`  | **When locked:** Start passphrase entry to unlock encrypted key definitions. Type your passphrase, then press `ENTER` again to submit.                      |
+| `INSERT` | **When unlocked:** Change passphrase and re-encrypt key definitions. Type new passphrase, then press `ENTER` to save.                                       |
+| `ESC`    | Cancel the current operation (e.g., exit passphrase entry or key definition mode).                                                                          |
+| `DEL`    | **Erase everything** - immediately deletes encryption key and all key definitions from flash. No confirmation prompt. Cannot be undone!                     |
+| `END`    | Lock device and clear decrypted key definitions from memory. Encrypted data in flash is preserved. Re-enter passphrase (double-shift + `ENTER`) to unlock.  |
+| `=`      | Start defining/redefining a key. Next keystroke is the trigger key, following keystrokes are the expansion. End with another double-shift.                  |
+| `PRINT`  | Write the current encryption key to an NFC tag (requires PN532 reader and Mifare Classic tag).                                                              |
+| `PAUSE`  | *While holding both shifts:* Reboot into bootloader mode for flashing new firmware.                                                                         |
 
 ### First-Time Setup
 
 A freshly flashed device starts in the **unlocked** state with no passphrase or key definitions.
 
 To set up encryption:
-1. **Double-shift** + `ENTER` to start setting a passphrase
+1. **Double-shift** + `INSERT` to start setting a passphrase
 2. Type your desired passphrase (letters, numbers, symbols - any keys on your keyboard)
 3. Press `ENTER` to save
 4. The passphrase is used to derive an encryption key that protects your key definitions in flash
@@ -146,7 +148,69 @@ To set up encryption:
 - If you enter the wrong passphrase when unlocking, the device stays locked with no visible feedback (check serial debug output for errors)
 - There's no password recovery - if you forget it, use double-shift + `DEL` to erase and start over
 
-### Example: Creating a Text Expansion
+### Editing Macros via Mass Storage Mode
+
+For easier macro editing, you can mount the device as a USB flash drive and edit macros in a text file.
+
+**To enter MSC mode:**
+1. Power off the device (unplug it)
+2. Hold **both shift keys + Equal (=)** on your physical keyboard
+3. While holding these keys, power on the device (plug it in)
+4. The device appears as a USB drive named "Macro Storage"
+5. Open the `macros.txt` file in your favorite text editor
+
+**Macro File Format:**
+
+```
+# Comments start with #
+# Format: trigger { commands... }
+
+a { "Hello, world!" }           # 'a' types text
+
+F1 { "Help text" ENTER }        # F1 types text + Enter
+
+F2 { ^C "pasted" ^V }           # F2: Ctrl+C, type "pasted", Ctrl+V
+
+0x04 { [01:06] [00:00] }        # Hex trigger with raw HID reports
+```
+
+**Syntax:**
+- `trigger { commands... }` - Define a macro (whitespace flexible)
+- `"text"` - Type text (use `\"` for quotes, `\\` for backslash)
+- `MNEMONIC` - Special keys: `ENTER`, `ESC`, `TAB`, `F1`-`F24`, `PAGEUP`, `PAGEDOWN`, arrow keys, etc.
+- `^C` - Ctrl+key shorthand (^A through ^Z for Ctrl+A through Ctrl+Z)
+- `[mod:key]` - Raw HID report in hex (mod = modifier byte, key = keycode)
+- Triggers can be: single character (`a`), mnemonic (`F1`), or hex (`0x04`)
+
+**Examples:**
+
+```
+# Simple text expansion
+m { "meeting@example.com" }
+
+# Multi-line with special keys
+F5 { "Date: " TAB "Time: " ENTER }
+
+# Copy/paste with formatting
+F6 { ^C PAGEDOWN ^V }
+
+# Complex sequence with raw reports
+F7 { "Starting..." [01:06] [00:00] "Done!" }
+```
+
+**To save and exit:**
+1. Save the file in your text editor
+2. Eject/unmount the USB drive from your operating system
+3. The device automatically reboots back to normal HID mode
+4. Your macros are now active!
+
+**Important Notes:**
+- The 23KB buffer holds approximately 46 full keydefs with 10 reports each
+- If serialization fails (too many macros), the file shows an error message
+- Macros are stored unencrypted in MSC mode - encryption happens after ejecting
+- Any parse errors will be logged to serial console (connect to see errors)
+
+### Example: Creating a Text Expansion (Traditional Method)
 
 Let's define the letter `m` to expand to "meeting@example.com":
 
