@@ -111,7 +111,7 @@ if [[ "$INTERACTIVE" == true ]]; then
     if [[ "$USE_DOCKER" == true ]]; then
         check_docker
         echo -e "${GREEN}Opening interactive shell in Docker container...${NC}"
-        docker-compose -f docker/docker-compose.yml run --rm pico-build bash
+        docker compose -f docker/docker-compose.yml run --rm pico-build bash
     else
         echo -e "${YELLOW}Interactive mode only works with Docker${NC}"
         exit 1

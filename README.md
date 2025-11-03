@@ -307,9 +307,35 @@ Key constants in `hid_proxy.h`:
 
 | Constant                | Value      | Description                           |
 |-------------------------|------------|---------------------------------------|
-| `FLASH_STORE_OFFSET`    | 512 KB     | Flash location for encrypted data     |
-| `FLASH_STORE_SIZE`      | 4 KB       | Maximum size for key definitions      |
+| `FLASH_STORE_SIZE`      | 64 KB      | Maximum size for key definitions      |
 | `IDLE_TIMEOUT_MILLIS`   | 120 min    | Auto-lock timeout                     |
+
+### Modifying Flash Storage Size
+
+To change the amount of flash memory reserved for storing key definitions, you only need to edit one file:
+
+1.  **`memmap_custom.ld`**: This linker script defines the actual memory region in flash.
+
+**Example: Changing storage to 128KB**
+
+1.  **Edit `memmap_custom.ld`**:
+    *   **Calculate the new start address**: The total flash size is 2MB (0x200000). The storage is placed at the end of the flash. So, for 128KB (0x20000), the new start address will be `0x10200000 - 0x20000 = 0x101E0000`.
+    *   **Update the size**: The size is `128 * 1024 = 131072`.
+    *   Modify the `.flash_storage` section:
+        ```ld
+        SECTIONS
+        {
+            .flash_storage 0x101E0000 (NOLOAD) :
+            {
+                . = ALIGN(4);
+                __flash_storage_start = .;
+                . = . + 131072;
+                __flash_storage_end = .;
+            }
+        }
+        ```
+
+3.  **Rebuild the project**.
 
 ## Known Issues
 

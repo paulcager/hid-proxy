@@ -26,6 +26,7 @@ else()
 endif()
 
 include (pico_sdk_import.cmake)
+
 project(hid_proxy)
 
 pico_sdk_init()
@@ -75,6 +76,8 @@ target_link_libraries(hid_proxy PUBLIC
         tinyusb_board
         tinyusb_host
 )
+
+target_link_options(hid_proxy PRIVATE "-T${CMAKE_CURRENT_SOURCE_DIR}/memmap_custom.ld")
 
 pico_add_extra_outputs(hid_proxy)
 

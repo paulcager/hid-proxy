@@ -9,13 +9,13 @@
 #include "logging.h"
 
 // The amount of flash available to us to save data.
-#define FLASH_STORE_SIZE (FLASH_SECTOR_SIZE)
+#define FLASH_STORE_SIZE ((size_t)(__flash_storage_end - __flash_storage_start))
 
-// The offset within the flash we will use to store data.
-// TODO - maybe choose flashEnd-size?
-#define FLASH_STORE_OFFSET (512 * 1024)
+extern uint8_t __flash_storage_start[];
+extern uint8_t __flash_storage_end[];
 
-#define FLASH_STORE_ADDRESS ((void*)(XIP_BASE + FLASH_STORE_OFFSET))
+#define FLASH_STORE_OFFSET (__flash_storage_start - (uint8_t*)XIP_BASE)
+#define FLASH_STORE_ADDRESS ((void*)__flash_storage_start)
 
 // Magic value to signal MSC boot mode
 #define MSC_BOOT_MAGIC 0xDEADBEEF
