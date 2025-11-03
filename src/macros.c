@@ -391,7 +391,7 @@ static const char* keycode_to_mnemonic(uint8_t keycode) {
 
 // Reverse lookup: find ASCII char for a keycode (without modifier)
 static char keycode_to_ascii(uint8_t keycode, uint8_t modifier) {
-    for (int c = 0; c < sizeof(ascii_to_hid) / sizeof(ascii_to_hid[0]); c++) {
+    for (size_t c = 0; c < sizeof(ascii_to_hid) / sizeof(ascii_to_hid[0]); c++) {
         if (ascii_to_hid[c].key == keycode && ascii_to_hid[c].mod == modifier) {
             return (char)c;
         }

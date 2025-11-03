@@ -93,10 +93,8 @@ bool tud_msc_start_stop_cb(uint8_t lun, uint8_t command, bool start, bool load_e
   {
     // stop command (eject): parse the buffer and write to flash
     LOG_INFO("MSC: Disk Ejected! Parsing and writing to flash.\n");
-    store_t temp_store;
-    if (parse_macros(msc_disk_buffer, &temp_store)) {
-        // Copy parsed (unencrypted) data to kb.local_store
-        memcpy(kb.local_store, &temp_store, FLASH_STORE_SIZE);
+    // Parse directly into kb.local_store (which is already allocated to FLASH_STORE_SIZE)
+    if (parse_macros(msc_disk_buffer, kb.local_store)) {
         save_state(&kb);
         LOG_INFO("MSC: Macros parsed and written to flash successfully.\n");
     } else {

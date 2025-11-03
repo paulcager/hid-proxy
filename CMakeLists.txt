@@ -1,5 +1,16 @@
 cmake_minimum_required(VERSION 3.13)
 
+# Option to build tests for host instead of Pico firmware
+option(BUILD_TESTS "Build unit tests for host" OFF)
+
+if(BUILD_TESTS)
+    # Build tests for host machine (no Pico SDK needed)
+    project(hid_proxy_tests C)
+    add_subdirectory(test)
+    return()
+endif()
+
+# Normal Pico firmware build below
 # Allow PICO_SDK_PATH to be overridden by environment variable or command line
 # Priority: 1) CMake cache/command line, 2) Environment variable, 3) Default local path
 if(NOT PICO_SDK_PATH)
@@ -22,37 +33,33 @@ pico_sdk_init()
 add_subdirectory("./Pico-PIO-USB" pico_pio_usb)
 
 add_executable(hid_proxy
-        hid_proxy.c
-        flash.c
-        hid_proxy.h
-        key_defs.c
-        logging.h
-        encryption.c
-        encryption.h
+        src/hid_proxy.c
+        src/flash.c
+        src/key_defs.c
+        src/encryption.c
+        src/sane.c
+        src/nfc_tag.c
+        src/macros.c
+        src/msc_disk.c
+        src/usb_host.c
+        src/usb_descriptors.c
         tiny-AES-c/aes.c
-        sane.c
         tinycrypt/lib/source/sha256.c
         tinycrypt/lib/source/utils.c
-        nfc_tag.c
-        macros.c
-        msc_disk.c
-        usb_host.c
-        usb_host.h
 )
 
 target_sources(hid_proxy PUBLIC
-        ${CMAKE_CURRENT_LIST_DIR}/hid_proxy
-        ${CMAKE_CURRENT_LIST_DIR}/usb_descriptors.c
         # I have copied the following from the samples, without understanding why.
         # can use 'tinyusb_pico_pio_usb' library later when pico-sdk is updated
         ${PICO_TINYUSB_PATH}/src/portable/raspberrypi/pio_usb/dcd_pio_usb.c
         ${PICO_TINYUSB_PATH}/src/portable/raspberrypi/pio_usb/hcd_pio_usb.c
-        )
+)
 
-# Make sure TinyUSB can find tusb_config.h
+# Make sure TinyUSB can find tusb_config.h and project headers
 target_include_directories(hid_proxy PUBLIC
+        ${CMAKE_CURRENT_LIST_DIR}/include
         ${CMAKE_CURRENT_LIST_DIR}
-        tinycrypt/lib/include
+        ${CMAKE_CURRENT_LIST_DIR}/tinycrypt/lib/include
 )
 
 target_link_libraries(hid_proxy PUBLIC
