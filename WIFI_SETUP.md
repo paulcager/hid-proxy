@@ -12,11 +12,27 @@ The HID Proxy now supports WiFi-based configuration via HTTP API, eliminating th
 
 ## Initial WiFi Setup
 
-Since WiFi configuration is stored in flash, you need to set it up once. Currently, you have two options:
+Since WiFi configuration is stored in flash, you need to set it up once. You have three options:
 
-### Option 1: Manual Flash Programming (Temporary)
+### Option 1: Build-Time Configuration via .env file (Recommended)
 
-Until the serial console is implemented, you can manually write WiFi config to flash:
+The easiest way to configure WiFi is to create a `.env` file in the root of the project directory. If this file exists when you build the firmware, the credentials will be automatically baked into the image.
+
+1.  **Create a `.env` file** in the project's root directory.
+2.  **Add your credentials** to the file like this:
+
+    ```
+    WIFI_SSID="Your-SSID"
+    WIFI_PASSWORD="Your-Password"
+    ```
+
+3.  **Build and flash** the firmware as usual.
+
+On the first boot, the device will automatically save these credentials to its flash memory and reboot. Subsequent boots will use the saved credentials.
+
+### Option 2: Manual Flash Programming (Advanced)
+
+If you cannot use the `.env` method, you can manually write the WiFi configuration directly to the device's flash memory.
 
 1. Build and flash the firmware normally
 2. Use a flash programming tool to write WiFi config at offset `FLASH_STORE_OFFSET + 4096`

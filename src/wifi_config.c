@@ -6,12 +6,15 @@
 #include "lwip/apps/mdns.h"
 #include <string.h>
 
+#include "pico/sync.h"
+
 // WiFi config stored at second flash sector after keydefs
 extern uint8_t __flash_storage_start[];
 extern uint8_t __flash_storage_end[];
 
 #define WIFI_CONFIG_OFFSET (FLASH_STORE_OFFSET + FLASH_STORE_SIZE)
 #define WIFI_CONFIG_ADDRESS ((wifi_config_t*)(__flash_storage_start + FLASH_STORE_SIZE))
+#define WIFI_CONFIG_SIZE (4 * 1024) // 1 flash sector
 
 web_state_t web_state = {
     .web_access_enabled = false,
@@ -22,8 +25,34 @@ static wifi_config_t current_config;
 static bool wifi_initialized = false;
 static bool wifi_connected = false;
 
+// Forward declaration
+void wifi_config_save(const wifi_config_t *config);
+
 void wifi_config_init(void) {
     wifi_config_load(&current_config);
+
+#if defined(WIFI_SSID) && defined(WIFI_PASSWORD)
+    // Credentials are baked into the firmware.
+    // Check if we need to update the flash.
+    if (!wifi_config_is_valid(&current_config) ||
+        current_config.enable_wifi == false ||
+        strcmp(current_config.ssid, WIFI_SSID) != 0 ||
+        strcmp(current_config.password, WIFI_PASSWORD) != 0) {
+
+        LOG_INFO("Updating WiFi config from build-time values...");
+
+        memset(&current_config, 0, sizeof(current_config));
+        memcpy(current_config.magic, WIFI_CONFIG_MAGIC, 8);
+        strncpy(current_config.ssid, WIFI_SSID, sizeof(current_config.ssid) - 1);
+        strncpy(current_config.password, WIFI_PASSWORD, sizeof(current_config.password) - 1);
+        current_config.enable_wifi = true;
+
+        wifi_config_save(&current_config);
+        LOG_INFO("WiFi config updated, rebooting...");
+        // Reboot to apply the new config cleanly
+        pico_reboot();
+    }
+#endif
 
     if (!wifi_config_is_valid(&current_config)) {
         LOG_INFO("No valid WiFi config found, WiFi disabled\n");
@@ -37,10 +66,22 @@ void wifi_config_load(wifi_config_t *config) {
     memcpy(config, WIFI_CONFIG_ADDRESS, sizeof(wifi_config_t));
 }
 
+static void internal_wifi_config_save(void *data) {
+    flash_range_erase(WIFI_CONFIG_OFFSET, WIFI_CONFIG_SIZE);
+    flash_range_program(WIFI_CONFIG_OFFSET, (const uint8_t *)data, WIFI_CONFIG_SIZE);
+}
+
 void wifi_config_save(const wifi_config_t *config) {
-    // TODO: Implement flash write for WiFi config
-    // Similar to save_state() but for WiFi config sector
-    LOG_INFO("WiFi config save not yet implemented\n");
+    static uint8_t wifi_config_buffer[WIFI_CONFIG_SIZE];
+    memset(wifi_config_buffer, 0xFF, WIFI_CONFIG_SIZE); // Erased flash is 0xFF
+    memcpy(wifi_config_buffer, config, sizeof(wifi_config_t));
+
+    int ret = flash_safe_execute(internal_wifi_config_save, wifi_config_buffer, 100);
+    if (ret != PICO_OK) {
+        LOG_ERROR("wifi_config_save failed with %d", ret);
+    } else {
+        LOG_INFO("WiFi config saved to flash.");
+    }
 }
 
 bool wifi_config_is_valid(const wifi_config_t *config) {

@@ -101,6 +101,59 @@ pico_add_extra_outputs(hid_proxy)
 pico_enable_stdio_usb(hid_proxy 0)
 pico_enable_stdio_uart(hid_proxy 1)
 
+# Check for .env file and bake in WiFi credentials if present
+if(PICO_CYW43_SUPPORTED)
+    set(ENV_FILE "${CMAKE_SOURCE_DIR}/.env")
+    if(EXISTS ${ENV_FILE})
+        message(STATUS "Found .env file, attempting to read WiFi credentials.")
+        file(READ ${ENV_FILE} ENV_CONTENT)
+
+        # --- WIFI_SSID ---
+        if("${ENV_CONTENT}" MATCHES "WIFI_SSID=([^
+]*)")
+            set(WIFI_SSID "${CMAKE_MATCH_1}")
+            string(STRIP "${WIFI_SSID}" WIFI_SSID)
+
+            # Unquote if quoted
+            string(REGEX MATCH "^\"(.*)\"$" _ "${WIFI_SSID}")
+            if(CMAKE_MATCH_COUNT GREATER 0)
+                set(WIFI_SSID "${CMAKE_MATCH_1}")
+            else()
+                string(REGEX MATCH "^'(.*)'$" _ "${WIFI_SSID}")
+                if(CMAKE_MATCH_COUNT GREATER 0)
+                    set(WIFI_SSID "${CMAKE_MATCH_1}")
+                endif()
+            endif()
+
+            message(STATUS "Found WIFI_SSID: ${WIFI_SSID}")
+            target_compile_definitions(hid_proxy PRIVATE "WIFI_SSID=\"${WIFI_SSID}\"")
+        endif()
+
+        # --- WIFI_PASSWORD ---
+        if("${ENV_CONTENT}" MATCHES "WIFI_PASSWORD=([^
+]*)")
+            set(WIFI_PASSWORD "${CMAKE_MATCH_1}")
+            string(STRIP "${WIFI_PASSWORD}" WIFI_PASSWORD)
+
+            # Unquote if quoted
+            string(REGEX MATCH "^\"(.*)\"$" _ "${WIFI_PASSWORD}")
+            if(CMAKE_MATCH_COUNT GREATER 0)
+                set(WIFI_PASSWORD "${CMAKE_MATCH_1}")
+            else()
+                string(REGEX MATCH "^'(.*)'$" _ "${WIFI_PASSWORD}")
+                if(CMAKE_MATCH_COUNT GREATER 0)
+                    set(WIFI_PASSWORD "${CMAKE_MATCH_1}")
+                endif()
+            endif()
+
+            message(STATUS "Found WIFI_PASSWORD.")
+            target_compile_definitions(hid_proxy PRIVATE "WIFI_PASSWORD=\"${WIFI_PASSWORD}\"")
+        endif()
+    else()
+        message(STATUS ".env file not found, skipping build-time WiFi config.")
+    endif()
+endif()
+
 target_compile_definitions(hid_proxy PRIVATE
 # Can move the UART0 ports like so:
 #        PICO_DEFAULT_UART_RX_PIN=16

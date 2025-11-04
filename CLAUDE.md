@@ -180,7 +180,7 @@ curl http://hidproxy.local/status
 ## Future Development
 
 See CONFIGURATION_OPTIONS.md for additional planned features:
-- Serial console for WiFi setup (currently requires manual flash programming)
+- Serial console for WiFi setup (currently requires manual flash programming or a .env file at build time)
 - MQTT publishing of keystroke events to Home Assistant
 - Simple web UI for in-browser macro editing
 - HTTP Basic Auth (optional secondary protection layer)

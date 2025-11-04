@@ -6,3 +6,4 @@ cmake-build-debug/
 pico-debug.cfg
 rp2040.cfg
 build-test/
+.env
