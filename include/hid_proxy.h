@@ -17,9 +17,6 @@ extern uint8_t __flash_storage_end[];
 #define FLASH_STORE_OFFSET (__flash_storage_start - (uint8_t*)XIP_BASE)
 #define FLASH_STORE_ADDRESS ((void*)__flash_storage_start)
 
-// Magic value to signal MSC boot mode
-#define MSC_BOOT_MAGIC 0xDEADBEEF
-
 // The number of milliseconds without any keyboard input after which we'll
 // clear the plain-text storage, requiring re-input of the passphrase.
 #define IDLE_TIMEOUT_MILLIS ((int64_t)(120 * 60 * 1000))

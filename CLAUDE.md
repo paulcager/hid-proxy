@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **proof-of-concept** USB HID proxy for Raspberry Pi Pico that intercepts keyboard input between a physical keyboard and host computer. It provides encrypted storage of key definitions (text expansion/macros) in flash memory, with optional NFC tag authentication and USB mass storage editing.
+This is a **proof-of-concept** USB HID proxy for Raspberry Pi Pico that intercepts keyboard input between a physical keyboard and host computer. It provides encrypted storage of key definitions (text expansion/macros) in flash memory, with optional NFC tag authentication.
 
 **WARNING**: This is explicitly marked as "Do NOT use in production" with known security issues including lack of buffer overflow protection and basic encryption implementation.
 
@@ -33,7 +33,7 @@ Communication between cores uses three queues:
 
 **Key Definitions** (key_defs.c): Stores mappings from single keystrokes to sequences of HID reports. Definitions are stored in `kb.local_store->keydefs` as a variable-length array of `keydef_t` structures.
 
-**Macro Editing** (macros.c/h, msc_disk.c): Provides text-based macro editing via USB Mass Storage mode. Parser and serializer convert between binary keydef format and human-readable text format with syntax: `trigger { "text" MNEMONIC ^C [mod:key] }`.
+**Macro Parsing/Serialization** (macros.c/h): Provides text format parser and serializer to convert between binary keydef format and human-readable text format with syntax: `trigger { "text" MNEMONIC ^C [mod:key] }`. These functions will be used for future network-based configuration (HTTP API).
 
 **Encryption** (encryption.c/h): Uses SHA256 for key derivation from passphrase and AES (via tiny-AES-c) for encrypting key definitions stored in flash. IV is randomly generated and stored alongside encrypted data.
 
@@ -41,7 +41,7 @@ Communication between cores uses three queues:
 
 **NFC Authentication** (nfc_tag.c): Interfaces with PN532 NFC reader via I2C (GPIO 4/5) to read/write 16-byte encryption keys from Mifare Classic tags. Supports multiple known authentication keys for tag access.
 
-**USB Configuration** (tusb_config.h): Configures device stack with keyboard, mouse, CDC, and MSC interfaces. Host stack (via PIO-USB on GPIO2/3) configured for keyboard/mouse input.
+**USB Configuration** (tusb_config.h): Configures device stack with keyboard, mouse, and CDC interfaces. Host stack (via PIO-USB on GPIO2/3) configured for keyboard/mouse input.
 
 ## Building
 
@@ -83,15 +83,13 @@ The UI is activated by pressing both shift keys simultaneously, then releasing a
 - `ESC`: Cancel operation
 - `DEL`: Erase everything (flash + encryption key)
 - `END`: Lock key definitions
-- `=`: Start defining/redefining a key (traditional method)
+- `=`: Start defining/redefining a key (interactive mode)
 - `PRINT`: Write encryption key to NFC tag
 - `PAUSE` (with both shifts held): Reboot to bootloader for flashing
 
-## Mass Storage Mode
+## Macro Text Format
 
-Enter MSC mode by holding **both shifts + Equal**. The device reboots as a USB Mass Storage device presenting a `macros.txt` file for editing.
-
-**Macro Text Format:**
+The text format for macros (used for future HTTP/network configuration):
 - `trigger { commands... }` - whitespace flexible
 - `"text"` - quoted strings for typing (supports `\"` and `\\` escapes)
 - `MNEMONIC` - special keys (ENTER, ESC, TAB, F1-F24, arrows, PAGEUP, etc.)
@@ -106,28 +104,22 @@ F1 { "Help" ENTER }
 F2 { ^C "text" ^V }
 ```
 
-When the drive is ejected, the device parses the file, writes to flash (encrypted), and reboots to HID mode.
-
 ## Important Code Locations
 
 - Main state machine: `handle_keyboard_report()` in key_defs.c:27
 - Key definition evaluation: `evaluate_keydef()` in key_defs.c (called from state machine)
-- MSC boot mode detection: hid_proxy.c:48,79-95 (checks `msc_boot_mode_flag`)
-- MSC boot trigger: key_defs.c:41-46 (double-shift + Equal sets flag and reboots)
+- Interactive key definition: `start_define()` in key_defs.c:204
 - Macro parser: `parse_macros()` in macros.c:262
 - Macro serializer: `serialize_macros()` in macros.c:321
-- MSC callbacks: msc_disk.c:34-200 (TinyUSB mass storage device implementation)
 - Flash encryption/decryption: encryption.c with `store_encrypt()`/`store_decrypt()`
 - NFC state machine: `nfc_task()` in nfc_tag.c:373
 - USB host enumeration: `tuh_hid_mount_cb()` in usb_host.c:74
 
 ## Configuration Constants
 
-- `FLASH_STORE_OFFSET`: 512KB (hid_proxy.h:16)
+- `FLASH_STORE_OFFSET`: 512KB (hid_proxy.h:17)
 - `FLASH_STORE_SIZE`: One flash sector (4KB) (hid_proxy.h:12)
-- `MSC_DISK_BUFFER_SIZE`: 23KB for text editing (msc_disk.c:33)
-- `MSC_BOOT_MAGIC`: 0xDEADBEEF flag value (hid_proxy.h:21)
-- `IDLE_TIMEOUT_MILLIS`: 120 minutes before auto-lock (hid_proxy.h:25)
+- `IDLE_TIMEOUT_MILLIS`: 120 minutes before auto-lock (hid_proxy.h:20)
 - NFC key storage address: Block `0x3A` on Mifare tag (nfc_tag.c:18)
 - I2C pins: SDA=4, SCL=5; PIO-USB pins: DP=2 (nfc_tag.c:12-13, usb_host.c:38)
 
@@ -138,5 +130,13 @@ From README.md and code comments:
 2. Basic encryption implementation (not production-ready)
 3. Poor user interface with no status feedback
 4. Code quality issues acknowledged by author
-5. Queue overflow handling needed (hid_proxy.c:167 comment)
-6. USB stdio disabled for production (CMakeLists.txt:58-59 TODOs)
+5. Queue overflow handling needed (hid_proxy.c comment)
+6. USB stdio disabled for production (CMakeLists.txt:84-85 TODOs)
+
+## Future Development
+
+See CONFIGURATION_OPTIONS.md for planned network configuration features:
+- WiFi connectivity (Pico W)
+- HTTP API for macro editing via text format
+- MQTT integration for Home Assistant
+- Physical unlock (both shifts + HOME) for web access security

@@ -41,7 +41,6 @@ add_executable(hid_proxy
         src/sane.c
         src/nfc_tag.c
         src/macros.c
-        src/msc_disk.c
         src/usb_host.c
         src/usb_descriptors.c
         tiny-AES-c/aes.c
