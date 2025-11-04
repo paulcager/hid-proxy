@@ -255,10 +255,42 @@ stdio_driver_t stdio_uart = {
 
 4. **SDK Modification Not Recommended**: The comment mentions modifying pico-sdk's `stdio_usb.c` to remove `#ifndef LIB_TINYUSB_HOST`, but implementing a custom driver is the cleaner approach that doesn't require patching the SDK
 
+## Implementation Status
+
+✅ **COMPLETED** - Option A (cdc_stdio_lib) has been implemented with conditional compilation.
+
+### What Was Done
+
+1. **Added cdc_stdio_lib as submodule** at `/cdc_stdio_lib`
+2. **Updated CMakeLists.txt** with `ENABLE_USB_STDIO` option (defaults to OFF for production)
+3. **Added initialization code** in `hid_proxy.c` with `#ifdef ENABLE_USB_STDIO` guards
+4. **Fixed test builds** by adding mock flash storage symbols in `test/mocks/pico_mocks.c`
+
+### How to Build
+
+**For development (with USB CDC stdio debugging):**
+```bash
+cd build
+cmake .. -DENABLE_USB_STDIO=ON -DPICO_BOARD=pico_w
+make
+```
+
+**For production (USB CDC stdio disabled):**
+```bash
+cd build
+cmake .. -DPICO_BOARD=pico_w  # ENABLE_USB_STDIO defaults to OFF
+make
+```
+
+**Running tests:**
+```bash
+./test.sh
+```
+
 ## Recommended Next Steps
 
-1. **Try cdc_stdio_lib first** - It's battle-tested and maintained
-2. **Test thoroughly** - Ensure both printf output and input work correctly
+1. ✅ **Try cdc_stdio_lib first** - DONE: Integrated with conditional compilation
+2. **Test thoroughly** - Connect to USB CDC and verify printf output works
 3. **Verify with your dual-core setup** - Make sure USB CDC works correctly with Core 0/Core 1 split
 4. **Consider thread safety** - If using FreeRTOS or accessing from multiple cores, add appropriate locking
 

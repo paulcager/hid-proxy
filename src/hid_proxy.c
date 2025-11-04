@@ -50,6 +50,10 @@
 #include "http_server.h"
 #endif
 
+#ifdef ENABLE_USB_STDIO
+#include "cdc_stdio_lib.h"
+#endif
+
 // Reminders:
 // Latest is ~/pico/hid-proxy2/build
 // make && openocd -f interface/cmsis-dap.cfg -f target/rp2040.cfg -c "adapter speed 5000" -c "program $(ls *.elf) verify reset exit"
@@ -83,6 +87,13 @@ int main(void) {
     // init device stack on native usb (roothub port0)
     // Needs to be done before stdio_init_all();
     tud_init(0);
+
+#ifdef ENABLE_USB_STDIO
+    // Initialize USB CDC stdio (custom driver for TinyUSB host compatibility)
+    // This provides printf/scanf over USB CDC for debugging
+    cdc_stdio_lib_init();
+    printf("USB CDC stdio initialized\n");
+#endif
 
     stdio_init_all();
 

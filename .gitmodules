@@ -16,3 +16,6 @@
 [submodule "unity"]
 	path = unity
 	url = https://github.com/ThrowTheSwitch/Unity.git
+[submodule "cdc_stdio_lib"]
+	path = cdc_stdio_lib
+	url = https://github.com/rppicomidi/cdc_stdio_lib.git

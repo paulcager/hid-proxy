@@ -31,7 +31,17 @@ project(hid_proxy)
 
 pico_sdk_init()
 
+# Option to enable USB CDC stdio (for debugging)
+# Disabled by default for production builds
+option(ENABLE_USB_STDIO "Enable USB CDC stdio for debugging" OFF)
+
 add_subdirectory("./Pico-PIO-USB" pico_pio_usb)
+
+# Add cdc_stdio_lib only if USB stdio is enabled
+if(ENABLE_USB_STDIO)
+    add_subdirectory("./cdc_stdio_lib" cdc_stdio_lib)
+    message(STATUS "USB CDC stdio enabled for debugging")
+endif()
 
 add_executable(hid_proxy
         src/hid_proxy.c
@@ -89,6 +99,16 @@ if(PICO_CYW43_SUPPORTED)
     target_link_libraries(hid_proxy PUBLIC
         pico_cyw43_arch_lwip_threadsafe_background
         pico_lwip_mdns
+    )
+endif()
+
+# Add cdc_stdio_lib if USB stdio is enabled
+if(ENABLE_USB_STDIO)
+    target_link_libraries(hid_proxy PUBLIC
+        cdc_stdio_lib
+    )
+    target_compile_definitions(hid_proxy PRIVATE
+        ENABLE_USB_STDIO=1
     )
 endif()
 
