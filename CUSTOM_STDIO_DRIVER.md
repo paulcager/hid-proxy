@@ -265,18 +265,28 @@ stdio_driver_t stdio_uart = {
 2. **Updated CMakeLists.txt** with `ENABLE_USB_STDIO` option (defaults to OFF for production)
 3. **Added initialization code** in `hid_proxy.c` with `#ifdef ENABLE_USB_STDIO` guards
 4. **Fixed test builds** by adding mock flash storage symbols in `test/mocks/pico_mocks.c`
+5. **Fixed USB descriptors** in `usb_descriptors.h` and `usb_descriptors.c` to use `ENABLE_USB_STDIO` instead of `LIB_PICO_STDIO_USB`
 
 ### How to Build
 
 **For development (with USB CDC stdio debugging):**
 ```bash
-cd build
-cmake .. -DENABLE_USB_STDIO=ON -DPICO_BOARD=pico_w
-make
+./build.sh --stdio
 ```
 
 **For production (USB CDC stdio disabled):**
 ```bash
+./build.sh  # ENABLE_USB_STDIO defaults to OFF
+```
+
+**Alternative: Manual CMake build:**
+```bash
+# Development build
+cd build
+cmake .. -DENABLE_USB_STDIO=ON -DPICO_BOARD=pico_w
+make
+
+# Production build
 cd build
 cmake .. -DPICO_BOARD=pico_w  # ENABLE_USB_STDIO defaults to OFF
 make

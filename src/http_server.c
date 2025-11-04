@@ -16,6 +16,9 @@ static char http_macros_buffer[HTTP_MACROS_BUFFER_SIZE];
 static char http_post_buffer[HTTP_MACROS_BUFFER_SIZE];
 static size_t http_post_offset = 0;
 
+// Forward declarations of CGI handlers
+static const char *status_cgi_handler(int iIndex, int iNumParams, char *pcParam[], char *pcValue[]);
+
 // CGI handler for /status endpoint
 static const char *status_cgi_handler(int iIndex, int iNumParams, char *pcParam[], char *pcValue[]) {
     (void)iIndex;
@@ -178,6 +181,18 @@ void fs_close_custom(struct fs_file *file) {
 static const tCGI cgi_table[] = {
     {"/status", status_cgi_handler}
 };
+
+// Global CGI handler required by newer lwIP HTTP server
+// Signature: void httpd_cgi_handler(struct fs_file *file, const char* uri, int iNumParams, char *pcParam[], char *pcValue[])
+void httpd_cgi_handler(struct fs_file *file, const char* uri, int iNumParams, char *pcParam[], char *pcValue[]) {
+    (void)file;
+    (void)uri;
+    (void)iNumParams;
+    (void)pcParam;
+    (void)pcValue;
+    // This function is required by lwIP but we use http_set_cgi_handlers instead
+    // So this is just a stub to satisfy the linker
+}
 
 static const char *ssi_tags[] = {
     "status"

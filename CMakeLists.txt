@@ -31,6 +31,11 @@ project(hid_proxy)
 
 pico_sdk_init()
 
+# Debug: Show board selection
+message(STATUS "PICO_BOARD = ${PICO_BOARD}")
+message(STATUS "PICO_PLATFORM = ${PICO_PLATFORM}")
+message(STATUS "PICO_CYW43_SUPPORTED = ${PICO_CYW43_SUPPORTED}")
+
 # Option to enable USB CDC stdio (for debugging)
 # Disabled by default for production builds
 option(ENABLE_USB_STDIO "Enable USB CDC stdio for debugging" OFF)
@@ -92,6 +97,7 @@ target_link_libraries(hid_proxy PUBLIC
         tinyusb_device
         tinyusb_board
         tinyusb_host
+        pico_bootrom
 )
 
 # Add WiFi/HTTP libraries only if building for Pico W
@@ -99,6 +105,7 @@ if(PICO_CYW43_SUPPORTED)
     target_link_libraries(hid_proxy PUBLIC
         pico_cyw43_arch_lwip_threadsafe_background
         pico_lwip_mdns
+        pico_lwip_http
     )
 endif()
 
@@ -185,4 +192,10 @@ target_compile_definitions(hid_proxy PRIVATE
         PN532DEBUG=1
         DEBUG_SERIAL=Serial
 )
+
+# Pass PICO_CYW43_SUPPORTED to source code as a preprocessor macro
+if(PICO_CYW43_SUPPORTED)
+    target_compile_definitions(hid_proxy PRIVATE PICO_CYW43_SUPPORTED=1)
+    message(STATUS "PICO_CYW43_SUPPORTED defined for source code")
+endif()
 

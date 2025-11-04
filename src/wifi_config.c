@@ -2,6 +2,7 @@
 #include "hid_proxy.h"
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
+#include "hardware/watchdog.h"  // For watchdog_reboot
 #include "hardware/flash.h"
 #include "lwip/apps/mdns.h"
 #include <string.h>
@@ -14,7 +15,6 @@ extern uint8_t __flash_storage_end[];
 
 #define WIFI_CONFIG_OFFSET (FLASH_STORE_OFFSET + FLASH_STORE_SIZE)
 #define WIFI_CONFIG_ADDRESS ((wifi_config_t*)(__flash_storage_start + FLASH_STORE_SIZE))
-#define WIFI_CONFIG_SIZE (4 * 1024) // 1 flash sector
 
 web_state_t web_state = {
     .web_access_enabled = false,
@@ -33,13 +33,13 @@ void wifi_config_init(void) {
 
 #if defined(WIFI_SSID) && defined(WIFI_PASSWORD)
     // Credentials are baked into the firmware.
-    // Check if we need to update the flash.
+    // If flash config is invalid or doesn't match, use build-time values
     if (!wifi_config_is_valid(&current_config) ||
         current_config.enable_wifi == false ||
         strcmp(current_config.ssid, WIFI_SSID) != 0 ||
         strcmp(current_config.password, WIFI_PASSWORD) != 0) {
 
-        LOG_INFO("Updating WiFi config from build-time values...");
+        LOG_INFO("Using WiFi config from build-time values\n");
 
         memset(&current_config, 0, sizeof(current_config));
         memcpy(current_config.magic, WIFI_CONFIG_MAGIC, 8);
@@ -47,10 +47,8 @@ void wifi_config_init(void) {
         strncpy(current_config.password, WIFI_PASSWORD, sizeof(current_config.password) - 1);
         current_config.enable_wifi = true;
 
-        wifi_config_save(&current_config);
-        LOG_INFO("WiFi config updated, rebooting...");
-        // Reboot to apply the new config cleanly
-        pico_reboot();
+        // Note: We don't save to flash here because core1 isn't running yet
+        // The config will be used from build-time values on every boot
     }
 #endif
 

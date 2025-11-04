@@ -13,6 +13,7 @@ CLEAN=false
 INTERACTIVE=false
 USE_DOCKER=true
 BOARD="pico_w"  # Default to Pico W
+ENABLE_USB_STDIO=false  # USB CDC stdio for debugging
 
 show_help() {
     cat << EOF
@@ -27,10 +28,12 @@ OPTIONS:
     -l, --local         Use local toolchain instead of Docker
     -d, --debug         Build with debug symbols
     -b, --board BOARD   Target board: pico or pico_w (default: pico_w)
+    -s, --stdio         Enable USB CDC stdio for debugging (printf over USB)
 
 EXAMPLES:
     ./build.sh                      # Build for Pico W (with WiFi)
     ./build.sh --board pico         # Build for regular Pico (no WiFi)
+    ./build.sh --stdio              # Build with USB CDC debugging enabled
     ./build.sh --clean              # Clean build
     ./build.sh --interactive        # Open shell for debugging
     ./build.sh --local --board pico # Use local toolchain for regular Pico
@@ -38,6 +41,11 @@ EXAMPLES:
 BOARD OPTIONS:
     pico_w      Raspberry Pi Pico W (WiFi/HTTP enabled) - DEFAULT
     pico        Raspberry Pi Pico (WiFi disabled, smaller binary)
+
+DEBUG OPTIONS:
+    --stdio     Enable USB CDC stdio (printf/scanf over USB serial)
+                Access via /dev/ttyACM0 (or similar) at 115200 baud
+                Note: Adds ~20KB to binary, disable for production builds
 
 OUTPUT:
     build/hid_proxy.uf2         # Firmware file ready to flash
@@ -76,6 +84,10 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             shift 2
+            ;;
+        -s|--stdio)
+            ENABLE_USB_STDIO=true
+            shift
             ;;
         *)
             echo -e "${RED}Error: Unknown option $1${NC}"
@@ -146,18 +158,45 @@ if [[ "$USE_DOCKER" == true ]]; then
         docker build -t pico-bld docker/
     fi
 
+    # Prepare CMake flags
+    CMAKE_FLAGS="-DPICO_BOARD=$BOARD"
+    if [[ "$BUILD_TYPE" == "debug" ]]; then
+        CMAKE_FLAGS="$CMAKE_FLAGS -DCMAKE_BUILD_TYPE=Debug"
+        echo -e "${YELLOW}Debug build enabled (no optimization, debug symbols)${NC}"
+    else
+        CMAKE_FLAGS="$CMAKE_FLAGS -DCMAKE_BUILD_TYPE=Release"
+    fi
+    if [[ "$ENABLE_USB_STDIO" == true ]]; then
+        CMAKE_FLAGS="$CMAKE_FLAGS -DENABLE_USB_STDIO=ON"
+        echo -e "${YELLOW}USB CDC stdio debugging enabled${NC}"
+    fi
+
     # Run the build with board selection
     docker run --rm -v "$(pwd):/home/builder/project" pico-bld \
-        bash -c "mkdir -p build && cd build && cmake -DPICO_BOARD=$BOARD .. && make -j\$(nproc)"
+        bash -c "mkdir -p build && cd build && cmake $CMAKE_FLAGS .. && make -j\$(nproc)"
 
 else
     # Build locally
     check_local_toolchain
 
     echo -e "${GREEN}Building with local toolchain...${NC}"
+
+    # Prepare CMake flags
+    CMAKE_FLAGS="-DPICO_BOARD=$BOARD"
+    if [[ "$BUILD_TYPE" == "debug" ]]; then
+        CMAKE_FLAGS="$CMAKE_FLAGS -DCMAKE_BUILD_TYPE=Debug"
+        echo -e "${YELLOW}Debug build enabled (no optimization, debug symbols)${NC}"
+    else
+        CMAKE_FLAGS="$CMAKE_FLAGS -DCMAKE_BUILD_TYPE=Release"
+    fi
+    if [[ "$ENABLE_USB_STDIO" == true ]]; then
+        CMAKE_FLAGS="$CMAKE_FLAGS -DENABLE_USB_STDIO=ON"
+        echo -e "${YELLOW}USB CDC stdio debugging enabled${NC}"
+    fi
+
     mkdir -p build
     cd build
-    cmake -DPICO_BOARD=$BOARD ..
+    cmake $CMAKE_FLAGS ..
     make -j$(nproc)
     cd ..
 fi
@@ -167,10 +206,14 @@ if [[ -f "build/hid_proxy.uf2" ]]; then
     echo -e "${GREEN}✓ Build successful!${NC}"
     echo ""
     echo "Board: $BOARD"
+    echo "Build type: $BUILD_TYPE"
     if [[ "$BOARD" == "pico_w" ]]; then
         echo "Features: WiFi/HTTP enabled"
     else
         echo "Features: WiFi disabled (regular Pico)"
+    fi
+    if [[ "$ENABLE_USB_STDIO" == true ]]; then
+        echo "Debug: USB CDC stdio enabled (10s WiFi startup delay)"
     fi
     echo ""
     echo "Firmware files:"
@@ -185,6 +228,13 @@ if [[ -f "build/hid_proxy.uf2" ]]; then
         echo "  - Press both Shift keys + HOME to enable web access"
         echo "  - Access device at http://hidproxy.local"
         echo "  - See WIFI_SETUP.md for complete guide"
+    fi
+    if [[ "$ENABLE_USB_STDIO" == true ]]; then
+        echo ""
+        echo "USB CDC stdio debugging:"
+        echo "  - Connect to /dev/ttyACM0 (or similar) at 115200 baud"
+        echo "  - Example: minicom -D /dev/ttyACM0 -b 115200"
+        echo "  - Example: screen /dev/ttyACM0 115200"
     fi
 else
     echo -e "${RED}✗ Build failed${NC}"

@@ -82,6 +82,7 @@ int main(void) {
     // default 125MHz is not appropriate for PIO. Sysclock should be multiple of 12MHz.
     set_sys_clock_khz(120000, true);
 
+    // NFC setup - DMA conflict resolved by configuring PIO-USB to use DMA ch 2
     nfc_setup();
 
     // init device stack on native usb (roothub port0)
@@ -108,7 +109,19 @@ int main(void) {
 
     LOG_INFO("\n\nCore 0 (tud) running\n");
 
+
 #ifdef PICO_CYW43_SUPPORTED
+#ifdef ENABLE_USB_STDIO
+    // Delay WiFi init to allow USB CDC to enumerate for debugging
+    // Use a polling loop instead of sleep to keep USB stack running
+    LOG_INFO("Delaying WiFi initialization for 10 seconds (USB CDC debug mode)...\n");
+    absolute_time_t wifi_start_time = make_timeout_time_ms(10000);
+    while (!time_reached(wifi_start_time)) {
+        tud_task(); // Process USB events during the delay
+        tight_loop_contents(); // Yield to other tasks
+    }
+    LOG_INFO("Starting WiFi initialization...\n");
+#endif
     // Initialize WiFi (if configured) - only on Pico W
     wifi_config_init();
     wifi_init();

@@ -374,7 +374,7 @@ void nfc_task(bool key_required) {
     static unsigned int previous_status = 0;
     static bool previous_ack = false;
     if (previous_status != state.status || previous_ack != state.waiting_for_ack) {
-        LOG_INFO("NFC status changed from %s%s to %s%s\n",
+        LOG_TRACE("NFC status changed from %s%s to %s%s\n",
                  nfc_status_string(previous_status),
                  previous_ack ? "[ACK pending]" : "",
                  nfc_status_string(state.status),
@@ -389,7 +389,7 @@ void nfc_task(bool key_required) {
     }
 
     if (state.status == starting) {
-        LOG_INFO("Sending GETFIRMWAREVERSION to start identification process\n");
+        LOG_TRACE("Sending GETFIRMWAREVERSION to start identification process\n");
         if (!send_frame(PN532_COMMAND_GETFIRMWAREVERSION, NULL, 0)) {
             state.status = restart_after_idle;
             state.idle_finish = make_timeout_time_ms(1000);

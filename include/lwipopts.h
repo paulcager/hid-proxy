@@ -68,6 +68,10 @@
 #define LWIP_NUM_NETIF_CLIENT_DATA  (LWIP_MDNS_RESPONDER)
 #define LWIP_IGMP                   1
 
+// Memory pool sizes - increase to avoid exhaustion with mDNS + HTTP server
+#define MEMP_NUM_SYS_TIMEOUT        16  // Default is 6, increase for mDNS + HTTP + WiFi timers
+#define MEMP_NUM_NETBUF             8   // Increase for HTTP POST handling
+
 #ifndef NDEBUG
 #define LWIP_DEBUG                  1
 #define LWIP_STATS                  1
