@@ -44,6 +44,8 @@
 #include "nfc_tag.h"
 #include "encryption.h"
 #include "usb_host.h"
+#include "wifi_config.h"
+#include "http_server.h"
 
 // Reminders:
 // Latest is ~/pico/hid-proxy2/build
@@ -92,6 +94,9 @@ int main(void) {
 
     LOG_INFO("\n\nCore 0 (tud) running\n");
 
+    // Initialize WiFi (if configured)
+    wifi_config_init();
+    wifi_init();
 
     multicore_reset_core1();
     // all USB task run in core1
@@ -99,6 +104,7 @@ int main(void) {
 
     absolute_time_t last_interaction = get_absolute_time();
     status_t previous_status = locked;
+    bool http_server_started = false;
 
     while (true) {
         if (kb.status != previous_status) {
@@ -109,6 +115,14 @@ int main(void) {
         tud_task(); // tinyusb device task
         tud_cdc_write_flush();
         nfc_task(kb.status == locked);
+
+        // WiFi tasks
+        wifi_task();
+        if (wifi_is_connected() && !http_server_started) {
+            http_server_init();
+            http_server_started = true;
+        }
+        http_server_task();
 
         hid_report_t report;
         // Anything sent to us from the keyboard process (PIO on core1)?

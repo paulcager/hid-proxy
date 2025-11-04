@@ -41,6 +41,8 @@ add_executable(hid_proxy
         src/sane.c
         src/nfc_tag.c
         src/macros.c
+        src/wifi_config.c
+        src/http_server.c
         src/usb_host.c
         src/usb_descriptors.c
         tiny-AES-c/aes.c
@@ -74,6 +76,8 @@ target_link_libraries(hid_proxy PUBLIC
         tinyusb_device
         tinyusb_board
         tinyusb_host
+        pico_cyw43_arch_lwip_threadsafe_background
+        pico_lwip_http
 )
 
 target_link_options(hid_proxy PRIVATE "-T${CMAKE_CURRENT_SOURCE_DIR}/memmap_custom.ld")

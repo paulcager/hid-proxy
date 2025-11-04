@@ -4,6 +4,7 @@
 #include "usb_descriptors.h"
 #include "encryption.h"
 #include "nfc_tag.h"
+#include "wifi_config.h"
 
 static hid_keyboard_report_t release_all_keys = {0, 0, {0, 0, 0, 0, 0, 0}};
 
@@ -32,6 +33,13 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
     if (kb_report->modifier == 0x22 && key0 == HID_KEY_PAUSE) {
         multicore_reset_core1();
         reset_usb_boot(0,0);
+        return;
+    }
+
+    // Both shifts + HOME enables web access for 5 minutes
+    if (kb_report->modifier == 0x22 && key0 == HID_KEY_HOME) {
+        web_access_enable();
+        // Don't forward this combo to host
         return;
     }
 
