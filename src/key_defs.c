@@ -4,7 +4,10 @@
 #include "usb_descriptors.h"
 #include "encryption.h"
 #include "nfc_tag.h"
+
+#ifdef PICO_CYW43_SUPPORTED
 #include "wifi_config.h"
+#endif
 
 static hid_keyboard_report_t release_all_keys = {0, 0, {0, 0, 0, 0, 0, 0}};
 
@@ -36,12 +39,14 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
         return;
     }
 
-    // Both shifts + HOME enables web access for 5 minutes
+    // Both shifts + HOME enables web access for 5 minutes (Pico W only)
+#ifdef PICO_CYW43_SUPPORTED
     if (kb_report->modifier == 0x22 && key0 == HID_KEY_HOME) {
         web_access_enable();
         // Don't forward this combo to host
         return;
     }
+#endif
 
     switch (kb.status) {
 

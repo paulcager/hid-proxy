@@ -44,8 +44,11 @@
 #include "nfc_tag.h"
 #include "encryption.h"
 #include "usb_host.h"
+
+#ifdef PICO_CYW43_SUPPORTED
 #include "wifi_config.h"
 #include "http_server.h"
+#endif
 
 // Reminders:
 // Latest is ~/pico/hid-proxy2/build
@@ -94,9 +97,13 @@ int main(void) {
 
     LOG_INFO("\n\nCore 0 (tud) running\n");
 
-    // Initialize WiFi (if configured)
+#ifdef PICO_CYW43_SUPPORTED
+    // Initialize WiFi (if configured) - only on Pico W
     wifi_config_init();
     wifi_init();
+#else
+    LOG_INFO("WiFi not supported on this hardware\n");
+#endif
 
     multicore_reset_core1();
     // all USB task run in core1
@@ -104,7 +111,9 @@ int main(void) {
 
     absolute_time_t last_interaction = get_absolute_time();
     status_t previous_status = locked;
+#ifdef PICO_CYW43_SUPPORTED
     bool http_server_started = false;
+#endif
 
     while (true) {
         if (kb.status != previous_status) {
@@ -116,13 +125,15 @@ int main(void) {
         tud_cdc_write_flush();
         nfc_task(kb.status == locked);
 
-        // WiFi tasks
+#ifdef PICO_CYW43_SUPPORTED
+        // WiFi tasks (only on Pico W)
         wifi_task();
         if (wifi_is_connected() && !http_server_started) {
             http_server_init();
             http_server_started = true;
         }
         http_server_task();
+#endif
 
         hid_report_t report;
         // Anything sent to us from the keyboard process (PIO on core1)?

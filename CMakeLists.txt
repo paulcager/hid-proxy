@@ -41,14 +41,20 @@ add_executable(hid_proxy
         src/sane.c
         src/nfc_tag.c
         src/macros.c
-        src/wifi_config.c
-        src/http_server.c
         src/usb_host.c
         src/usb_descriptors.c
         tiny-AES-c/aes.c
         tinycrypt/lib/source/sha256.c
         tinycrypt/lib/source/utils.c
 )
+
+# Add WiFi/HTTP sources only if building for Pico W
+if(PICO_CYW43_SUPPORTED)
+    target_sources(hid_proxy PRIVATE
+        src/wifi_config.c
+        src/http_server.c
+    )
+endif()
 
 target_sources(hid_proxy PUBLIC
         # I have copied the following from the samples, without understanding why.
@@ -76,9 +82,15 @@ target_link_libraries(hid_proxy PUBLIC
         tinyusb_device
         tinyusb_board
         tinyusb_host
+)
+
+# Add WiFi/HTTP libraries only if building for Pico W
+if(PICO_CYW43_SUPPORTED)
+    target_link_libraries(hid_proxy PUBLIC
         pico_cyw43_arch_lwip_threadsafe_background
         pico_lwip_http
-)
+    )
+endif()
 
 target_link_options(hid_proxy PRIVATE "-T${CMAKE_CURRENT_SOURCE_DIR}/memmap_custom.ld")
 

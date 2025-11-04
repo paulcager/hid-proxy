@@ -1,6 +1,6 @@
 # hid-proxy
 
-A USB HID keyboard proxy for Raspberry Pi Pico that intercepts and processes keystrokes between a physical keyboard and host computer. Provides encrypted text expansion/macros with optional NFC tag authentication.
+A USB HID keyboard proxy for Raspberry Pi Pico (or Pico W) that intercepts and processes keystrokes between a physical keyboard and host computer. Provides encrypted text expansion/macros with optional NFC tag authentication and WiFi-based configuration (Pico W only).
 
 **⚠️ WARNING: Do NOT use in production**
 
@@ -14,18 +14,24 @@ This is a proof-of-concept and has many bodges, including:
 
 ## Features
 
+**Core features (Pico and Pico W):**
 - **Pass-through mode**: Keystrokes normally pass directly from physical keyboard to host
 - **Text expansion**: Define single keystrokes that expand to sequences (macros)
-- **Mass storage editing**: Edit macros in a text file by mounting device as USB drive
 - **Encrypted storage**: Key definitions stored encrypted in flash memory
 - **Passphrase unlock**: Decrypt key definitions with password
 - **NFC authentication**: Optionally store/read encryption keys from NFC tags
 - **Auto-lock**: Automatically locks after 120 minutes of inactivity
 
+**Pico W exclusive features:**
+- **WiFi/HTTP configuration**: Edit macros via HTTP API without USB re-enumeration
+- **Physical web unlock**: Both-shifts+HOME enables 5-minute web access window
+- **mDNS support**: Access device at `hidproxy.local`
+
 ## Hardware Requirements
 
 ### Required Components
-- **Raspberry Pi Pico** (RP2040)
+- **Raspberry Pi Pico** (RP2040) - basic functionality
+  - Or **Raspberry Pi Pico W** (RP2040 with CYW43 WiFi) - for WiFi/HTTP features
 - **USB cables**:
   - One for connecting physical keyboard to Pico (requires USB-A to micro-USB adapter or cable)
   - One for connecting Pico to host computer (micro-USB to USB-A/C)
@@ -148,16 +154,24 @@ To set up encryption:
 - If you enter the wrong passphrase when unlocking, the device stays locked with no visible feedback (check serial debug output for errors)
 - There's no password recovery - if you forget it, use double-shift + `DEL` to erase and start over
 
-### Editing Macros via Mass Storage Mode
+### Editing Macros via HTTP API (Pico W Only)
 
-For easier macro editing, you can mount the device as a USB flash drive and edit macros in a text file.
+If you have a Pico W, use the WiFi/HTTP interface for easier macro editing. See **WIFI_SETUP.md** for complete guide.
 
-**To enter MSC mode:**
-1. Power off the device (unplug it)
-2. Hold **both shift keys + Equal (=)** on your physical keyboard
-3. While holding these keys, power on the device (plug it in)
-4. The device appears as a USB drive named "Macro Storage"
-5. Open the `macros.txt` file in your favorite text editor
+**Quick start:**
+1. Configure WiFi (see WIFI_SETUP.md for initial setup)
+2. Press **both shift keys + HOME** on your keyboard to enable web access (5 minutes)
+3. Download macros: `curl http://hidproxy.local/macros.txt > macros.txt`
+4. Edit the file in your favorite text editor
+5. Upload changes: `curl -X POST http://hidproxy.local/macros.txt --data-binary @macros.txt`
+
+**Advantages:**
+- No USB re-enumeration (keyboard stays functional)
+- Edit from any device on your network
+- No need to unplug/replug
+- Faster iteration
+
+**Note:** If using regular Pico (non-W), use the interactive "double shift + =" mode to define macros one at a time.
 
 **Macro File Format:**
 
