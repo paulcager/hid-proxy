@@ -88,7 +88,7 @@ target_link_libraries(hid_proxy PUBLIC
 if(PICO_CYW43_SUPPORTED)
     target_link_libraries(hid_proxy PUBLIC
         pico_cyw43_arch_lwip_threadsafe_background
-        pico_lwip_http
+        pico_lwip_mdns
     )
 endif()
 

@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "pico/time.h"
 
 // WiFi configuration stored in separate flash sector from encrypted keydefs
 #define WIFI_CONFIG_MAGIC "hidwifi1"

@@ -4,6 +4,7 @@
 #include "macros.h"
 #include "lwip/tcp.h"
 #include "lwip/apps/httpd.h"
+#include "lwip/apps/fs.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -57,9 +58,9 @@ static u16_t ssi_handler(int iIndex, char *pcInsert, int iInsertLen) {
 }
 
 // POST handler for /macros.txt
-static err_t http_post_begin(void *connection, const char *uri, const char *http_request,
-                              u16_t http_request_len, int content_len, char *response_uri,
-                              u16_t response_uri_len, u8_t *post_auto_wnd) {
+err_t httpd_post_begin(void *connection, const char *uri, const char *http_request,
+                       u16_t http_request_len, int content_len, char *response_uri,
+                       u16_t response_uri_len, u8_t *post_auto_wnd) {
     (void)connection;
     (void)http_request;
     (void)http_request_len;
@@ -91,7 +92,7 @@ static err_t http_post_begin(void *connection, const char *uri, const char *http
     return ERR_OK;
 }
 
-static err_t http_post_receive_data(void *connection, struct pbuf *p) {
+err_t httpd_post_receive_data(void *connection, struct pbuf *p) {
     (void)connection;
 
     // Copy data into buffer
@@ -107,7 +108,7 @@ static err_t http_post_receive_data(void *connection, struct pbuf *p) {
     return ERR_OK;
 }
 
-static void http_post_finished(void *connection, char *response_uri, u16_t response_uri_len) {
+void httpd_post_finished(void *connection, char *response_uri, u16_t response_uri_len) {
     (void)connection;
 
     LOG_INFO("POST finished, parsing %zu bytes\n", http_post_offset);
@@ -174,8 +175,8 @@ void fs_close_custom(struct fs_file *file) {
     // Nothing to clean up
 }
 
-static const char *cgi_table[] = {
-    "/status", status_cgi_handler
+static const tCGI cgi_table[] = {
+    {"/status", status_cgi_handler}
 };
 
 static const char *ssi_tags[] = {
@@ -190,7 +191,7 @@ void http_server_init(void) {
 
     LOG_INFO("Starting HTTP server...\n");
 
-    // Set custom filesystem handlers
+    // Initialize HTTP server
     httpd_init();
 
     // Register CGI handlers
@@ -199,10 +200,9 @@ void http_server_init(void) {
     // Register SSI handlers
     http_set_ssi_handler(ssi_handler, ssi_tags, sizeof(ssi_tags) / sizeof(ssi_tags[0]));
 
-    // Register POST handlers
-    httpd_post_begin = http_post_begin;
-    httpd_post_receive_data = http_post_receive_data;
-    httpd_post_finished = http_post_finished;
+    // Note: POST handlers are registered via compile-time hooks in httpd_opts.h
+    // The functions http_post_begin, http_post_receive_data, and http_post_finished
+    // are already defined and will be called by the httpd implementation
 
     LOG_INFO("HTTP server started\n");
 }
