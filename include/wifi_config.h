@@ -14,7 +14,7 @@ typedef struct {
     char ssid[32];
     char password[64];
     bool enable_wifi;
-    uint8_t reserved[4096 - 8 - 32 - 64 - 1];  // Pad to full sector
+    uint8_t reserved[4096 - sizeof(char[8]) - sizeof(char[32]) - sizeof(char[64]) - sizeof(bool)];  // Pad to full sector
 } wifi_config_t;
 
 // Web access state (in RAM, not persisted)

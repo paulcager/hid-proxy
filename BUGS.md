@@ -745,17 +745,7 @@ set(PICO_SDK_PATH /home/paul/pico/pico-sdk)
 
 ---
 
-### 50. Unimplemented wifi_config_save function
-**File:** `wifi_config.c`
-**Line:** 34
-**Description:** The `wifi_config_save` function is marked with a `TODO` comment, indicating that its implementation is missing.
-```c
-// TODO: Implement flash write for WiFi config
-```
-**Impact:** Any changes made to the WiFi configuration (SSID, password, enable/disable) will not be persisted across device reboots, requiring users to reconfigure WiFi every time the device powers off.
-**Fix:** Implement the flash writing logic within `wifi_config_save` to store the current WiFi configuration permanently.
 
----
 
 ## SUMMARY
 
