@@ -196,7 +196,20 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
 
             keydef_t *this_def = kb.key_being_defined;
 
-            // TODO - check remaining space
+            // Check remaining space to prevent buffer overflow
+            size_t start_of_this_def_addr = (size_t)this_def;
+            size_t end_of_flash_store_addr = (size_t)kb.local_store + FLASH_STORE_SIZE;
+            size_t space_remaining_from_this_def = end_of_flash_store_addr - start_of_this_def_addr;
+
+            size_t max_reports = 0;
+            if (space_remaining_from_this_def > sizeof(keydef_t)) {
+                max_reports = (space_remaining_from_this_def - sizeof(keydef_t)) / sizeof(hid_keyboard_report_t);
+            }
+
+            if (this_def->used >= max_reports) {
+                LOG_ERROR("Buffer overflow prevented: Max reports (%zu) for keydef (keycode %02x) reached. Ignoring report.\n", max_reports, this_def->keycode);
+                return; // Ignore the report to prevent overflow
+            }
 
             this_def->reports[this_def->used] = *kb_report;
             this_def->used++;
@@ -210,7 +223,7 @@ void start_define(uint8_t key0) {
     kb.key_being_defined = NULL;
 
     void *ptr = kb.local_store->keydefs;
-    void *limit = ptr + FLASH_STORE_SIZE;
+    void *limit = (void*)kb.local_store + FLASH_STORE_SIZE;
 
     while(true) {
         keydef_t *def = ptr;
@@ -227,9 +240,16 @@ void start_define(uint8_t key0) {
         void *next = ptr + sizeof(keydef_t) + (def->used * sizeof(hid_keyboard_report_t));
 
         if (def->keycode == key0) {
-            // We are replacing a definition. Shuffle down the buffer and let's not worry about efficiency.
-            memmove(ptr, next, limit - next);
-            continue;
+            // We are replacing a definition. Shuffle down the buffer.
+            if (next < limit) {
+                memmove(ptr, next, limit - next);
+                continue;
+            } else {
+                // This keydef is corrupt and extends beyond the store.
+                // We can't memmove, so just overwrite it in place.
+                kb.key_being_defined = def;
+                break;
+            }
         }
 
         ptr = next;

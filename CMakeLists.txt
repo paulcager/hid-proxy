@@ -96,7 +96,11 @@ target_link_options(hid_proxy PRIVATE "-T${CMAKE_CURRENT_SOURCE_DIR}/memmap_cust
 
 pico_add_extra_outputs(hid_proxy)
 
-# TODO - disable USB stdio for prod build.
+# The pico_stdio_usb is disabled because of a conflict with the TinyUSB host stack (LIB_TINYUSB_HOST),
+# which this project uses for PIO-USB. The Pico SDK automatically disables stdio_usb in this configuration.
+# The official recommendation for enabling both is to implement a custom stdio_driver_t.
+# See for more details: https://forums.raspberrypi.com/viewtopic.php?t=305225
+# The original comment below is preserved for historical context.
 # TODO - also need to modify pcio SDK src/rp2_common/pico_stdio_usb/stdio_usb.c to remove `#ifndef LIB_TINYUSB_HOST`
 pico_enable_stdio_usb(hid_proxy 0)
 pico_enable_stdio_uart(hid_proxy 1)

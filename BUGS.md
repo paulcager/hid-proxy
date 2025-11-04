@@ -15,29 +15,19 @@ This document contains a comprehensive analysis of bugs and issues found in the 
 
 ## CRITICAL BUGS
 
-### 1. Buffer Overflow in key_defs.c - No bounds checking during key definition
+### 1. Buffer Overflow in key_defs.c - No bounds checking during key definition (FIXED)
 **File:** `key_defs.c`
 **Lines:** 180-184
-**Description:** When defining a key sequence, there's no check to ensure we don't exceed the available space in `FLASH_STORE_SIZE`.
-```c
-// TODO - check remaining space
-this_def->reports[this_def->used] = *kb_report;
-this_def->used++;
-```
-**Impact:** A user could overflow the flash storage buffer by recording an extremely long key sequence, corrupting memory and potentially causing system crash.
-**Fix:** Calculate remaining space before adding to definition. Check if `(void*)&this_def->reports[this_def->used + 1] < (void*)kb.local_store + FLASH_STORE_SIZE`.
+**Description:** When defining a key sequence, there was no check to ensure we didn't exceed the available space for reports within a `keydef_t`.
+**Fix Implemented:** Added bounds checking to calculate the maximum number of reports that can be stored for a given key definition based on the remaining flash space. If the limit is reached, subsequent reports are ignored, preventing a buffer overflow. This ensures that `this_def->used` does not grow beyond the allocated memory for the key definition.
 
 ---
 
-### 2. Buffer Overflow in key_defs.c:start_define() - Memmove calculation error
+### 2. Buffer Overflow in key_defs.c:start_define() - Memmove calculation error (FIXED)
 **File:** `key_defs.c`
 **Line:** 212
-**Description:** The memmove operation calculates size as `limit - next`, but `next` could be beyond `limit` in edge cases, resulting in a huge unsigned size.
-```c
-memmove(ptr, next, limit - next);
-```
-**Impact:** Could cause memory corruption when replacing a key definition near the end of storage.
-**Fix:** Add bounds check: `if (next < limit) memmove(ptr, next, limit - next);`
+**Description:** The `memmove` operation's size calculation could be incorrect if `next` was beyond `limit` due to corrupted data, leading to a huge unsigned size. This could also lead to an infinite loop if `next >= limit` and `def->keycode == key0`.
+**Fix Implemented:** Added a bounds check (`if (next < limit)`) before `memmove`. If `next` is not less than `limit` (indicating a corrupted key definition), the current key definition is marked for overwrite, and the loop breaks, preventing both the `memmove` error and an infinite loop.
 
 ---
 
@@ -267,15 +257,11 @@ memcpy(state.key, response_data+1, response_data_size-1);
 
 ## MEDIUM SEVERITY BUGS
 
-### 16. Off-by-One Error in Flash Bounds Check
+### 16. Off-by-One Error in Flash Bounds Check (FIXED)
 **File:** `key_defs.c`
 **Line:** 194
-**Description:** Comparing pointer to offset in key store.
-```c
-void *limit = ptr + FLASH_STORE_SIZE;
-```
-**Impact:** `limit` should point to the end of keydefs area, not the end of entire flash store. The magic/IV/encrypted_magic fields occupy the first part of the store.
-**Fix:** `void *limit = (void*)kb.local_store + FLASH_STORE_SIZE;`
+**Description:** The `limit` variable in `start_define` was incorrectly calculated as `ptr + FLASH_STORE_SIZE`, where `ptr` was `kb.local_store->keydefs`. This meant `limit` was pointing beyond the actual end of the flash storage area, leading to incorrect bounds checking.
+**Fix Implemented:** The `limit` calculation has been corrected to `(void*)kb.local_store + FLASH_STORE_SIZE`, ensuring it accurately represents the end of the entire flash storage area.
 
 ---
 
