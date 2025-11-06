@@ -12,7 +12,7 @@ BUILD_TYPE="release"
 CLEAN=false
 INTERACTIVE=false
 USE_DOCKER=true
-BOARD="pico_w"  # Default to Pico W
+BOARD="pico_w"  # Default to Pico W (RP2040)
 ENABLE_USB_STDIO=false  # USB CDC stdio for debugging
 
 show_help() {
@@ -27,20 +27,27 @@ OPTIONS:
     -i, --interactive   Open interactive shell in Docker container
     -l, --local         Use local toolchain instead of Docker
     -d, --debug         Build with debug symbols
-    -b, --board BOARD   Target board: pico or pico_w (default: pico_w)
+    -b, --board BOARD   Target board: pico, pico_w, pico2, pico2_w (default: pico_w)
     -s, --stdio         Enable USB CDC stdio for debugging (printf over USB)
 
 EXAMPLES:
-    ./build.sh                      # Build for Pico W (with WiFi)
-    ./build.sh --board pico         # Build for regular Pico (no WiFi)
+    ./build.sh                      # Build for Pico W (RP2040 with WiFi)
+    ./build.sh --board pico         # Build for regular Pico (RP2040, no WiFi)
+    ./build.sh --board pico2_w      # Build for Pico2 W (RP2350 with WiFi)
+    ./build.sh --board pico2        # Build for Pico2 (RP2350, no WiFi)
     ./build.sh --stdio              # Build with USB CDC debugging enabled
     ./build.sh --clean              # Clean build
     ./build.sh --interactive        # Open shell for debugging
     ./build.sh --local --board pico # Use local toolchain for regular Pico
 
 BOARD OPTIONS:
-    pico_w      Raspberry Pi Pico W (WiFi/HTTP enabled) - DEFAULT
-    pico        Raspberry Pi Pico (WiFi disabled, smaller binary)
+    pico_w      Raspberry Pi Pico W (RP2040 with WiFi/HTTP) - DEFAULT
+    pico        Raspberry Pi Pico (RP2040, WiFi disabled, smaller binary)
+    pico2_w     Raspberry Pi Pico2 W (RP2350 with WiFi/HTTP)
+    pico2       Raspberry Pi Pico2 (RP2350, WiFi disabled, smaller binary)
+
+    NOTE: Pico2 (RP2350) support is experimental. PIO-USB compatibility
+          depends on GPIO selection. Test thoroughly before production use.
 
 DEBUG OPTIONS:
     --stdio     Enable USB CDC stdio (printf/scanf over USB serial)
@@ -79,8 +86,8 @@ while [[ $# -gt 0 ]]; do
             ;;
         -b|--board)
             BOARD="$2"
-            if [[ "$BOARD" != "pico" && "$BOARD" != "pico_w" ]]; then
-                echo -e "${RED}Error: Invalid board '$BOARD'. Must be 'pico' or 'pico_w'${NC}"
+            if [[ "$BOARD" != "pico" && "$BOARD" != "pico_w" && "$BOARD" != "pico2" && "$BOARD" != "pico2_w" ]]; then
+                echo -e "${RED}Error: Invalid board '$BOARD'. Must be 'pico', 'pico_w', 'pico2', or 'pico2_w'${NC}"
                 exit 1
             fi
             shift 2
@@ -208,9 +215,17 @@ if [[ -f "build/hid_proxy.uf2" ]]; then
     echo "Board: $BOARD"
     echo "Build type: $BUILD_TYPE"
     if [[ "$BOARD" == "pico_w" ]]; then
+        echo "Platform: RP2040"
         echo "Features: WiFi/HTTP enabled"
-    else
+    elif [[ "$BOARD" == "pico" ]]; then
+        echo "Platform: RP2040"
         echo "Features: WiFi disabled (regular Pico)"
+    elif [[ "$BOARD" == "pico2_w" ]]; then
+        echo "Platform: RP2350"
+        echo "Features: WiFi/HTTP enabled (EXPERIMENTAL - test PIO-USB)"
+    elif [[ "$BOARD" == "pico2" ]]; then
+        echo "Platform: RP2350"
+        echo "Features: WiFi disabled (EXPERIMENTAL - test PIO-USB)"
     fi
     if [[ "$ENABLE_USB_STDIO" == true ]]; then
         echo "Debug: USB CDC stdio enabled (10s WiFi startup delay)"
@@ -223,7 +238,7 @@ if [[ -f "build/hid_proxy.uf2" ]]; then
     echo "  1. Hold both Shift keys + PAUSE on running device (enters BOOTSEL mode)"
     echo "  2. Copy build/hid_proxy.uf2 to the RPI-RP2 drive"
     echo ""
-    if [[ "$BOARD" == "pico_w" ]]; then
+    if [[ "$BOARD" == "pico_w" || "$BOARD" == "pico2_w" ]]; then
         echo "WiFi/HTTP configuration:"
         echo "  - Press both Shift keys + HOME to enable web access"
         echo "  - Access device at http://hidproxy.local"

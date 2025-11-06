@@ -8,11 +8,21 @@ This is a **proof-of-concept** USB HID proxy for Raspberry Pi Pico W that interc
 
 **WARNING**: This is explicitly marked as "Do NOT use in production" with known security issues including lack of buffer overflow protection and basic encryption implementation.
 
+## Board Support
+
+**Supported Hardware**:
+- Raspberry Pi Pico (RP2040, no WiFi)
+- Raspberry Pi Pico W (RP2040 with WiFi/HTTP)
+- Raspberry Pi Pico2 (RP2350, no WiFi) - **EXPERIMENTAL**
+- Raspberry Pi Pico2 W (RP2350 with WiFi/HTTP) - **EXPERIMENTAL**
+
+**Pico2 (RP2350) Status**: Build support is provided via Pico SDK 2.2.0, but PIO-USB compatibility is uncertain and depends on GPIO selection. The project uses GPIO2/3 for PIO-USB host stack. Test thoroughly before deployment.
+
 ## Architecture
 
 ### Dual-Core Design
 
-The application uses both cores of the RP2040:
+The application uses both cores of the RP2040/RP2350:
 
 - **Core 0** (`main()` in hid_proxy.c): Handles TinyUSB device stack (acts as keyboard to host computer), main state machine, NFC operations, and flash encryption/decryption
 - **Core 1** (`core1_main()` in usb_host.c): Handles TinyUSB host stack via PIO-USB (receives input from physical keyboard)
@@ -52,19 +62,40 @@ Communication between cores uses three queues:
 ## Building
 
 ### Prerequisites
-- **Raspberry Pi Pico W** (with CYW43 WiFi chip)
-- Pico SDK installed at `/home/paul/pico/pico-sdk` (or update `PICO_SDK_PATH` in CMakeLists.txt)
+- **Raspberry Pi Pico/Pico W/Pico2/Pico2 W**
+- Docker (recommended) or local Pico SDK 2.2.0+
 - Submodules initialized: `Pico-PIO-USB`, `tiny-AES-c`, `tinycrypt`
 
-### Build Commands
+### Quick Build with Docker
+```bash
+# Build for default board (Pico W / RP2040)
+./build.sh
+
+# Build for specific board
+./build.sh --board pico         # RP2040, no WiFi
+./build.sh --board pico_w       # RP2040 with WiFi (default)
+./build.sh --board pico2        # RP2350, no WiFi (EXPERIMENTAL)
+./build.sh --board pico2_w      # RP2350 with WiFi (EXPERIMENTAL)
+
+# Other options
+./build.sh --stdio              # Enable USB CDC stdio for debugging
+./build.sh --clean              # Clean build
+./build.sh --debug              # Debug build with symbols
+./build.sh --help               # Show all options
+```
+
+### Manual Build (without Docker)
 ```bash
 # Initial setup
 git submodule update --init --recursive
+export PICO_SDK_PATH=/path/to/pico-sdk
 mkdir build && cd build
-cmake ..
+
+# Configure for specific board
+cmake -DPICO_BOARD=pico_w ..    # or pico, pico2, pico2_w
 
 # Build
-make
+make -j$(nproc)
 
 # Flash via OpenOCD (with debug probe)
 openocd -f interface/cmsis-dap.cfg -f target/rp2040.cfg \

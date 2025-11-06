@@ -16,7 +16,8 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /opt
 
 # --- Core Pico SDK ---
-RUN git clone -b master https://github.com/raspberrypi/pico-sdk.git && \
+# Pinned to 2.2.0 for RP2350 (Pico2) support
+RUN git clone -b 2.2.0 --depth 1 https://github.com/raspberrypi/pico-sdk.git && \
     cd pico-sdk && git submodule update --init
 
 # Environment vars for CMake
