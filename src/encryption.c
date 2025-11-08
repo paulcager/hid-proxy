@@ -13,10 +13,38 @@
 #include "pico/rand.h"
 #include "pico/unique_id.h"
 #include "tinycrypt/sha256.h"
+#include "pbkdf-lite.h"
 
-static struct tc_sha256_state_struct sha256;
+static uint8_t key[32];
+static uint8_t password_buf[128];
+static size_t password_len = 0;
 
-static uint8_t key[32];     // Allow for a 32-byte SHA digest, but AES will only use the first 16 bytes as a key.
+void enc_add_password_byte(uint8_t b) {
+    if (password_len < sizeof(password_buf)) {
+        password_buf[password_len++] = b;
+    }
+}
+
+void enc_clear_password() {
+    memset(password_buf, 0, sizeof(password_buf));
+    password_len = 0;
+}
+
+void enc_derive_key_from_password() {
+    pico_unique_board_id_t id;
+    pico_get_unique_board_id(&id);
+
+    // Derive key from password buffer
+    absolute_time_t start = get_absolute_time();
+    derive_key(key, password_buf, password_len, id.id, PICO_UNIQUE_BOARD_ID_SIZE_BYTES);
+    absolute_time_t end = get_absolute_time();
+    LOG_INFO("derive_key took %lld μs (%ld millis)\n", to_us_since_boot(end) - to_us_since_boot(start), to_ms_since_boot(end) - to_ms_since_boot(start));
+
+    // SECURITY: Immediately clear the plaintext password from memory after key derivation.
+    // This must happen before any subsequent operations that might fail, to ensure the
+    // password buffer doesn't persist in RAM if an error/panic occurs later in the caller.
+    enc_clear_password();
+}
 
 void enc_set_key(uint8_t *data, size_t length) {
     assert(length <= sizeof(key));
@@ -31,25 +59,7 @@ void enc_get_key(uint8_t *data, size_t length) {
 
 void enc_clear_key() {
     memset(key, 0, sizeof key);
-    tc_sha256_init(&sha256);
-}
-
-void enc_end_key_derivation() {
-    tc_sha256_final(key, &sha256);
-#ifdef DEBUG
-    hex_dump(key, 32);
-#endif
-}
-
-void enc_add_key_derivation_byte(uint8_t b) {
-    tc_sha256_update(&sha256, &b, 1);
-}
-
-void enc_start_key_derivation() {
-    pico_unique_board_id_t id;
-    pico_get_unique_board_id(&id);
-    tc_sha256_init(&sha256);
-    tc_sha256_update(&sha256, (const uint8_t *) &id, PICO_UNIQUE_BOARD_ID_SIZE_BYTES);
+    enc_clear_password();
 }
 
 bool store_encrypt(kb_t *kb) {
@@ -69,7 +79,7 @@ bool store_encrypt(kb_t *kb) {
     AES_CTR_xcrypt_buffer(&ctx, (uint8_t *) s->encrypted_magic, FLASH_STORE_SIZE - offsetof(store_t, encrypted_magic));
 
     LOG_INFO("store_encrypt:\n");
-    hex_dump(key, 16);
+    hex_dump(key, 32);
 
     return true;
 }
@@ -86,7 +96,7 @@ bool store_decrypt(kb_t *kb) {
     assert_sane(kb);
 
     LOG_INFO("store_decrypt:\n");
-    hex_dump(key, 16);
+    hex_dump(key, 32);
 
 
     return ret;

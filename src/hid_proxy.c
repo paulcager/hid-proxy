@@ -34,16 +34,27 @@
 #include "pico/util/queue.h"
 #include "pico/multicore.h"
 #include "hardware/clocks.h"
+#include "hardware/watchdog.h"
 
 #include "pio_usb.h"
 #include "tusb.h"
 #include "usb_descriptors.h"
 
 #include "hid_proxy.h"
+#ifdef ENABLE_NFC
 #include "nfc_tag.h"
+#endif
 #include "encryption.h"
 #include "usb_host.h"
 
+#ifdef PICO_CYW43_SUPPORTED
+#include "wifi_config.h"
+#include "http_server.h"
+#endif
+
+#ifdef ENABLE_USB_STDIO
+#include "cdc_stdio_lib.h"
+#endif
 
 // Reminders:
 // Latest is ~/pico/hid-proxy2/build
@@ -73,11 +84,21 @@ int main(void) {
     // default 125MHz is not appropriate for PIO. Sysclock should be multiple of 12MHz.
     set_sys_clock_khz(120000, true);
 
+#ifdef ENABLE_NFC
+    // NFC setup - DMA conflict resolved by configuring PIO-USB to use DMA ch 2
     nfc_setup();
+#endif
 
     // init device stack on native usb (roothub port0)
     // Needs to be done before stdio_init_all();
     tud_init(0);
+
+#ifdef ENABLE_USB_STDIO
+    // Initialize USB CDC stdio (custom driver for TinyUSB host compatibility)
+    // This provides printf/scanf over USB CDC for debugging
+    cdc_stdio_lib_init();
+    printf("USB CDC stdio initialized\n");
+#endif
 
     stdio_init_all();
 
@@ -93,12 +114,34 @@ int main(void) {
     LOG_INFO("\n\nCore 0 (tud) running\n");
 
 
+#ifdef PICO_CYW43_SUPPORTED
+#ifdef ENABLE_USB_STDIO
+    // Delay WiFi init to allow USB CDC to enumerate for debugging
+    // Use a polling loop instead of sleep to keep USB stack running
+    LOG_INFO("Delaying WiFi initialization for 10 seconds (USB CDC debug mode)...\n");
+    absolute_time_t wifi_start_time = make_timeout_time_ms(10000);
+    while (!time_reached(wifi_start_time)) {
+        tud_task(); // Process USB events during the delay
+        tight_loop_contents(); // Yield to other tasks
+    }
+    LOG_INFO("Starting WiFi initialization...\n");
+#endif
+    // Initialize WiFi (if configured) - only on Pico W
+    wifi_config_init();
+    wifi_init();
+#else
+    LOG_INFO("WiFi not supported on this hardware\n");
+#endif
+
     multicore_reset_core1();
     // all USB task run in core1
     multicore_launch_core1(core1_main);
 
     absolute_time_t last_interaction = get_absolute_time();
     status_t previous_status = locked;
+#ifdef PICO_CYW43_SUPPORTED
+    bool http_server_started = false;
+#endif
 
     while (true) {
         if (kb.status != previous_status) {
@@ -108,7 +151,19 @@ int main(void) {
 
         tud_task(); // tinyusb device task
         tud_cdc_write_flush();
+#ifdef ENABLE_NFC
         nfc_task(kb.status == locked);
+#endif
+
+#ifdef PICO_CYW43_SUPPORTED
+        // WiFi tasks (only on Pico W)
+        wifi_task();
+        if (wifi_is_connected() && !http_server_started) {
+            http_server_init();
+            http_server_started = true;
+        }
+        http_server_task();
+#endif
 
         hid_report_t report;
         // Anything sent to us from the keyboard process (PIO on core1)?
@@ -125,17 +180,19 @@ int main(void) {
         }
 
         if (kb.status == locked) {
+#ifdef ENABLE_NFC
             if (nfc_key_available()) {
-                uint8_t key[16];
+                uint8_t key[32];  // Full 32-byte AES-256 key
                 nfc_get_key(key);
-                printf("Setting key\n");
-                hex_dump(key, 16);
+                printf("Setting 32-byte key from NFC\n");
+                hex_dump(key, 32);
                 enc_set_key(key, sizeof(key));
                 read_state(&kb);
                 if (kb.status == locked) {
                     nfc_bad_key();
                 }
             }
+#endif
         }
 
         if (kb.status != locked && absolute_time_diff_us(last_interaction, get_absolute_time()) > 1000 * IDLE_TIMEOUT_MILLIS) {

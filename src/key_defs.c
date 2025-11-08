@@ -1,9 +1,17 @@
+#include <stdlib.h>
 #include <pico/multicore.h>
 #include <pico/bootrom.h>
 #include "hid_proxy.h"
 #include "usb_descriptors.h"
 #include "encryption.h"
+#include "macros.h"
+#ifdef ENABLE_NFC
 #include "nfc_tag.h"
+#endif
+
+#ifdef PICO_CYW43_SUPPORTED
+#include "wifi_config.h"
+#endif
 
 static hid_keyboard_report_t release_all_keys = {0, 0, {0, 0, 0, 0, 0, 0}};
 
@@ -13,12 +21,7 @@ __attribute__((unused)) char keycode_to_letter_or_digit(uint8_t keycode);
 
 void start_define(uint8_t key0);
 
-static inline keydef_t *next_keydef(keydef_t *this) {
-    void *t = this;
-    t += sizeof(keydef_t) + (this->used * sizeof(hid_keyboard_report_t));
-    LOG_TRACE("Next(%p) -> %p\n", this, t);
-    return t;
-}
+// next_keydef() is now defined in macros.h
 
 
 void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
@@ -28,14 +31,51 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
 
     uint8_t key0 = kb_report->keycode[0];
 
-    // No matter what state we are in "double-shift + Pause" means reboot into upload mode.
-    if (kb_report->modifier == 0x22 && key0 == HID_KEY_PAUSE) {
+    // No matter what state we are in "double-shift + HOME" means reboot into upload mode.
+    if (kb_report->modifier == 0x22 && key0 == HID_KEY_HOME) {
         multicore_reset_core1();
         reset_usb_boot(0,0);
         return;
     }
 
     switch (kb.status) {
+
+        case blank:
+            if (kb_report->modifier == 0x22 && key0 == 0) {
+                kb.status = blank_seen_magic;
+            } else {
+                add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
+            }
+
+            return;
+
+        case blank_seen_magic:
+            switch (key0) {
+                case 0:
+                    return;
+
+                case HID_KEY_ESCAPE:
+                    kb.status = blank;
+                    return;
+
+                case HID_KEY_INSERT:
+                    // Set first password
+                    kb.status = entering_new_password;
+                    enc_clear_password();
+                    printf("Enter new password\n");
+                    return;
+
+                case HID_KEY_DELETE:
+                    // Already blank, just re-initialize to be safe
+                    init_state(&kb);
+                    return;
+
+                default:
+                    // Any other key returns to blank and forwards keystroke
+                    kb.status = blank;
+                    add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
+                    return;
+            }
 
         case locked:
             if (kb_report->modifier == 0x22 && key0 == 0) {
@@ -52,16 +92,24 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     return;
 
                 case HID_KEY_ESCAPE:
-                    lock();
+                    kb.status = locked;
                     return;
 
                 case HID_KEY_ENTER:
                     kb.status = entering_password;
-                    enc_start_key_derivation();
+                    enc_clear_password();
                     printf("Enter password\n");
                     return;
 
+                case HID_KEY_INSERT:
+                    // Change password while locked (will re-encrypt)
+                    kb.status = entering_new_password;
+                    enc_clear_password();
+                    printf("Enter new password\n");
+                    return;
+
                 case HID_KEY_DELETE:
+                    // Erase everything and return to blank state
                     init_state(&kb);
                     return;
 
@@ -79,9 +127,9 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
             }
 
             if (key0 != HID_KEY_ENTER) {
-                enc_add_key_derivation_byte(key0);
+                enc_add_password_byte(key0);
             } else {
-                enc_end_key_derivation();
+                enc_derive_key_from_password();
                 if (kb.status == entering_password) {
                     read_state(&kb);
                 } else {
@@ -115,13 +163,20 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     return;
 
                 case HID_KEY_PRINT_SCREEN:
+#ifdef ENABLE_NFC
                 {
-                    uint8_t key[16];
+                    // Write full 32-byte AES-256 key to NFC (stored across 2 blocks: 0x3A and 0x3B)
+                    uint8_t key[32];
                     enc_get_key(key, sizeof(key));
                     nfc_write_key(key, sizeof(key), 30 * 1000);
                     kb.status = normal;
                     return;
                 }
+#else
+                    // NFC not enabled - ignore PRINT_SCREEN command
+                    kb.status = normal;
+                    return;
+#endif
 
                 case HID_KEY_ESCAPE:
                     kb.status = normal;
@@ -134,12 +189,19 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 case HID_KEY_SPACE:
                     kb.status = normal;
                     print_keydefs();
+                    web_access_enable();
                     return;
 
                 case HID_KEY_ENTER:
-                    kb.status = entering_new_password;
-                    enc_start_key_derivation();
-                    printf("Enter password\n");
+                    // When unlocked, ENTER now starts capturing keystrokes to unlock (if locked).
+                    // Re-encryption moved to INSERT to avoid accidental data loss.
+                    kb.status = normal;
+                    return;
+
+                case HID_KEY_INSERT:
+                            kb.status = entering_new_password;
+                            enc_clear_password();
+                            printf("Enter new password\n");
                     return;
 
                 case HID_KEY_DELETE:
@@ -177,7 +239,20 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
 
             keydef_t *this_def = kb.key_being_defined;
 
-            // TODO - check remaining space
+            // Check remaining space to prevent buffer overflow
+            size_t start_of_this_def_addr = (size_t)this_def;
+            size_t end_of_flash_store_addr = (size_t)kb.local_store + FLASH_STORE_SIZE;
+            size_t space_remaining_from_this_def = end_of_flash_store_addr - start_of_this_def_addr;
+
+            size_t max_reports = 0;
+            if (space_remaining_from_this_def > sizeof(keydef_t)) {
+                max_reports = (space_remaining_from_this_def - sizeof(keydef_t)) / sizeof(hid_keyboard_report_t);
+            }
+
+            if (this_def->used >= max_reports) {
+                LOG_ERROR("Buffer overflow prevented: Max reports (%zu) for keydef (keycode %02x) reached. Ignoring report.\n", max_reports, this_def->keycode);
+                return; // Ignore the report to prevent overflow
+            }
 
             this_def->reports[this_def->used] = *kb_report;
             this_def->used++;
@@ -191,7 +266,7 @@ void start_define(uint8_t key0) {
     kb.key_being_defined = NULL;
 
     void *ptr = kb.local_store->keydefs;
-    void *limit = ptr + FLASH_STORE_SIZE;
+    void *limit = (void*)kb.local_store + FLASH_STORE_SIZE;
 
     while(true) {
         keydef_t *def = ptr;
@@ -208,9 +283,16 @@ void start_define(uint8_t key0) {
         void *next = ptr + sizeof(keydef_t) + (def->used * sizeof(hid_keyboard_report_t));
 
         if (def->keycode == key0) {
-            // We are replacing a definition. Shuffle down the buffer and let's not worry about efficiency.
-            memmove(ptr, next, limit - next);
-            continue;
+            // We are replacing a definition. Shuffle down the buffer.
+            if (next < limit) {
+                memmove(ptr, next, limit - next);
+                continue;
+            } else {
+                // This keydef is corrupt and extends beyond the store.
+                // We can't memmove, so just overwrite it in place.
+                kb.key_being_defined = def;
+                break;
+            }
         }
 
         ptr = next;
@@ -259,12 +341,16 @@ void evaluate_keydef(hid_keyboard_report_t *report, uint8_t key0) {
 
 
 void print_keydefs() {
-    int count = 0;
-    for (keydef_t *ptr = kb.local_store->keydefs; ptr->keycode != 0; ptr = next_keydef(ptr)) {
-        print_keydef(ptr);
-        count++;
+    // Use static buffer to avoid heap allocation failures on memory-constrained device
+    // This is separate from the HTTP server's buffer and only used for serial console output
+    static char output_buffer[FLASH_SECTOR_SIZE];
+
+    // Serialize keydefs to macro text format
+    if (serialize_macros(kb.local_store, output_buffer, sizeof(output_buffer))) {
+        printf("%s", output_buffer);
+    } else {
+        printf("Error: Failed to serialize macros\n");
     }
-    printf("There are %d keydefs\n", count);
 }
 
 void print_keydef(const keydef_t *def) {

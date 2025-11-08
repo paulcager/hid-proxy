@@ -9,13 +9,13 @@
 #include "logging.h"
 
 // The amount of flash available to us to save data.
-#define FLASH_STORE_SIZE (FLASH_SECTOR_SIZE)
+#define FLASH_STORE_SIZE ((size_t)(__flash_storage_end - __flash_storage_start))
 
-// The offset within the flash we will use to store data.
-// TODO - maybe choose flashEnd-size?
-#define FLASH_STORE_OFFSET (512 * 1024)
+extern uint8_t __flash_storage_start[];
+extern uint8_t __flash_storage_end[];
 
-#define FLASH_STORE_ADDRESS ((void*)(XIP_BASE + FLASH_STORE_OFFSET))
+#define FLASH_STORE_OFFSET (__flash_storage_start - (uint8_t*)XIP_BASE)
+#define FLASH_STORE_ADDRESS ((void*)__flash_storage_start)
 
 // The number of milliseconds without any keyboard input after which we'll
 // clear the plain-text storage, requiring re-input of the passphrase.
@@ -43,7 +43,9 @@ typedef struct {
 } send_data_t;
 
 typedef enum {
-    locked = 0,
+    blank = 0,
+    blank_seen_magic,
+    locked,
     locked_seen_magic,
     entering_password,
     normal,
@@ -56,6 +58,10 @@ typedef enum {
 
 inline const char *status_string(status_t s) {
     switch (s) {
+        case blank:
+            return "blank";
+        case blank_seen_magic:
+            return "blank_seen_magic";
         case locked:
             return "locked";
         case locked_seen_magic:

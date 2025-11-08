@@ -5,3 +5,5 @@ cmake-build-debug/
 .uuid
 pico-debug.cfg
 rp2040.cfg
+build-test/
+.env

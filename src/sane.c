@@ -17,7 +17,14 @@ static bool all_zero(uint8_t *ptr, size_t count) {
 void assert_sane_func(char *file, int line, kb_t *k) {
     bool sane = true;
     sane &= memcmp(k->local_store->magic, FLASH_STORE_MAGIC, sizeof(k->local_store->magic)) == 0;
-    if (k->status != locked && k->status != locked_seen_magic && k->status != entering_password) {
+
+    // Skip detailed validation for locked states and password entry states
+    // Also skip for blank states (no password set yet, IV may be zeros)
+    if (k->status != blank &&
+        k->status != blank_seen_magic &&
+        k->status != locked &&
+        k->status != locked_seen_magic &&
+        k->status != entering_password) {
         sane &= memcmp(k->local_store->encrypted_magic, FLASH_STORE_MAGIC, sizeof(k->local_store->encrypted_magic)) == 0;
         sane &= !all_zero(k->local_store->iv, sizeof(k->local_store->iv));
 

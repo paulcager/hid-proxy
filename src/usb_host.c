@@ -36,7 +36,9 @@ void core1_main() {
     pio_usb_configuration_t pio_cfg = PIO_USB_DEFAULT_CONFIG;
     // Use GPIO2/3 for USB, leaving 0/1 available for UART if needed.
     pio_cfg.pin_dp = 2;
-    LOG_INFO("pio_cfg.pin_dp = %d\n", pio_cfg.pin_dp);
+    // Use DMA channel 2 instead of 0 to avoid conflict with CYW43 WiFi
+    pio_cfg.tx_ch = 2;
+    LOG_INFO("pio_cfg.pin_dp = %d, tx_ch = %d\n", pio_cfg.pin_dp, pio_cfg.tx_ch);
     tuh_configure(1, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &pio_cfg);
     bool ok = tuh_init(1);
     if (!ok) {

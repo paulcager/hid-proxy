@@ -2,7 +2,7 @@
 
 This document contains a comprehensive analysis of bugs and issues found in the hid-proxy codebase.
 
-**Total Bugs Found: 34**
+**Total Bugs Found: 53**
 
 **Breakdown by Severity:**
 - Critical: 7 bugs (buffer overflows, race conditions, NULL pointer issues)
@@ -15,29 +15,19 @@ This document contains a comprehensive analysis of bugs and issues found in the 
 
 ## CRITICAL BUGS
 
-### 1. Buffer Overflow in key_defs.c - No bounds checking during key definition
+### 1. Buffer Overflow in key_defs.c - No bounds checking during key definition (FIXED)
 **File:** `key_defs.c`
 **Lines:** 180-184
-**Description:** When defining a key sequence, there's no check to ensure we don't exceed the available space in `FLASH_STORE_SIZE`.
-```c
-// TODO - check remaining space
-this_def->reports[this_def->used] = *kb_report;
-this_def->used++;
-```
-**Impact:** A user could overflow the flash storage buffer by recording an extremely long key sequence, corrupting memory and potentially causing system crash.
-**Fix:** Calculate remaining space before adding to definition. Check if `(void*)&this_def->reports[this_def->used + 1] < (void*)kb.local_store + FLASH_STORE_SIZE`.
+**Description:** When defining a key sequence, there was no check to ensure we didn't exceed the available space for reports within a `keydef_t`.
+**Fix Implemented:** Added bounds checking to calculate the maximum number of reports that can be stored for a given key definition based on the remaining flash space. If the limit is reached, subsequent reports are ignored, preventing a buffer overflow. This ensures that `this_def->used` does not grow beyond the allocated memory for the key definition.
 
 ---
 
-### 2. Buffer Overflow in key_defs.c:start_define() - Memmove calculation error
+### 2. Buffer Overflow in key_defs.c:start_define() - Memmove calculation error (FIXED)
 **File:** `key_defs.c`
 **Line:** 212
-**Description:** The memmove operation calculates size as `limit - next`, but `next` could be beyond `limit` in edge cases, resulting in a huge unsigned size.
-```c
-memmove(ptr, next, limit - next);
-```
-**Impact:** Could cause memory corruption when replacing a key definition near the end of storage.
-**Fix:** Add bounds check: `if (next < limit) memmove(ptr, next, limit - next);`
+**Description:** The `memmove` operation's size calculation could be incorrect if `next` was beyond `limit` due to corrupted data, leading to a huge unsigned size. This could also lead to an infinite loop if `next >= limit` and `def->keycode == key0`.
+**Fix Implemented:** Added a bounds check (`if (next < limit)`) before `memmove`. If `next` is not less than `limit` (indicating a corrupted key definition), the current key definition is marked for overwrite, and the loop breaks, preventing both the `memmove` error and an infinite loop.
 
 ---
 
@@ -100,6 +90,45 @@ memcpy(item.data, data, sizeof(item.data));
 ```
 **Impact:** If `data` pointer points to less than `sizeof(item.data)` bytes, this reads beyond the buffer, potentially reading garbage or causing a crash.
 **Fix:** Use `len` parameter: `memcpy(item.data, data, len);`
+
+---
+
+### 46. Buffer Overflow in http_post_receive_data
+**File:** `http_server.c`
+**Line:** 102
+**Description:** The `http_post_receive_data` function adds a null terminator to `http_post_buffer` after copying data, without checking if there is enough space for it.
+```c
+http_post_buffer[http_post_offset] = '\0';
+```
+**Impact:** If `http_post_offset + p->tot_len` is exactly `HTTP_MACROS_BUFFER_SIZE - 1`, then adding the null terminator will write one byte past the end of the buffer, leading to a buffer overflow and potential memory corruption.
+**Fix:** Ensure that `http_post_offset + p->tot_len` is strictly less than `HTTP_MACROS_BUFFER_SIZE` before copying data and adding the null terminator. This means the maximum allowed data length should be `HTTP_MACROS_BUFFER_SIZE - 1`.
+
+---
+
+### 48. Multiple buffer overflows in parse_macros
+**File:** `macros.c`
+**Lines:** 206, 212, 222, 239
+**Description:** The `parse_macros` function contains multiple instances where a buffer overflow can occur when adding reports to a key definition. The function calls `panic("Buffer overflow in parser")` instead of handling the overflow gracefully.
+```c
+if (!add_report(current_def, mapping.mod, mapping.key, limit)) {
+    panic("Buffer overflow in parser");
+}
+```
+**Impact:** If the input macro definition is too long, the system will halt due to an unhandled `panic`, leading to a denial of service. This also indicates a lack of robust input validation.
+**Fix:** Replace `panic` with proper error handling, such as returning an error code or truncating the input to fit the buffer, and inform the user of the issue. Ensure `add_report` itself handles the `limit` correctly.
+
+
+---
+
+### 49. Multiple buffer overflows in serialize_macros
+**File:** `macros.c`
+**Lines:** 302, 332, 350, 362, 375, 381, 396
+**Description:** The `serialize_macros` function contains multiple instances where a buffer overflow can occur when writing to the output buffer. The function calls `panic("Buffer overflow in serializer")` instead of handling the overflow gracefully.
+```c
+if (written < 0 || p + written >= limit) panic("Buffer overflow in serializer");
+```
+**Impact:** If the serialized macro data exceeds `output_buffer` size, the system will halt due to an unhandled `panic`. This could also be exploited for denial of service.
+**Fix:** Replace `panic` with robust error handling, such as returning an error code upon failure to serialize the entire macro, or ensuring that the `output_buffer` is sufficiently large to prevent overflows.
 
 ---
 
@@ -217,17 +246,22 @@ memcpy(state.key, response_data+1, response_data_size-1);
 
 ---
 
+### 42. Potential Infinite Loop in nfc_task
+**File:** `nfc_tag.c`
+**Lines:** 550-565
+**Description:** In the `waiting_for_auth` state, if `send_authentication()` continuously fails and `state.auth_key_index` never reaches `NUM_KNOWN_AUTHS-1`, the system could get stuck in a loop trying to authenticate. The comment `// For some reason, this doesn't seem to work.` suggests an underlying issue.
+**Impact:** The NFC task could become unresponsive, preventing further NFC operations or potentially impacting other system functionalities if it consumes excessive resources.
+**Fix:** Implement a retry limit or a timeout mechanism for authentication attempts to prevent an infinite loop. After a certain number of failed attempts, transition to an error state or `idle_until` state.
+
+---
+
 ## MEDIUM SEVERITY BUGS
 
-### 16. Off-by-One Error in Flash Bounds Check
+### 16. Off-by-One Error in Flash Bounds Check (FIXED)
 **File:** `key_defs.c`
 **Line:** 194
-**Description:** Comparing pointer to offset in key store.
-```c
-void *limit = ptr + FLASH_STORE_SIZE;
-```
-**Impact:** `limit` should point to the end of keydefs area, not the end of entire flash store. The magic/IV/encrypted_magic fields occupy the first part of the store.
-**Fix:** `void *limit = (void*)kb.local_store + FLASH_STORE_SIZE;`
+**Description:** The `limit` variable in `start_define` was incorrectly calculated as `ptr + FLASH_STORE_SIZE`, where `ptr` was `kb.local_store->keydefs`. This meant `limit` was pointing beyond the actual end of the flash storage area, leading to incorrect bounds checking.
+**Fix Implemented:** The `limit` calculation has been corrected to `(void*)kb.local_store + FLASH_STORE_SIZE`, ensuring it accurately represents the end of the entire flash storage area.
 
 ---
 
@@ -349,6 +383,83 @@ if (state.auth_key_index < NUM_KNOWN_AUTHS-1) {
 
 ---
 
+### 43. Missing validation for NFC frame
+**File:** `nfc_tag.c`
+**Line:** 400
+**Description:** The `decode_frame` function has a `TODO` comment indicating that it should also check if the response's command is the request's command + 1.
+```c
+// TODO - also check response's command is request's command + 1.
+```
+**Impact:** Without this validation, the system might process an NFC response that does not correspond to the last sent command, leading to incorrect state transitions or data processing.
+**Fix:** Add a check to ensure that the `command` field in the response frame is `(expected_command + 1)`. This requires passing the expected command to `decode_frame`.
+
+---
+
+### 45. Panic on flash write failure
+**File:** `flash.c`
+**Lines:** 25, 30
+**Description:** The `save_state` function calls `panic` if `flash_safe_execute` returns an error or if `memcmp` fails after writing to flash.
+```c
+if (ret != PICO_OK) {
+    panic("flash_safe_execute returned %d", ret);
+}
+// ...
+if (memcmp(kb->local_store, FLASH_STORE_ADDRESS, FLASH_STORE_SIZE) != 0) {
+    panic("Didn't write what we thought we wrote");
+}
+```
+**Impact:** Calling `panic` immediately halts the system, which can be undesirable in a production environment. A more graceful error handling mechanism might involve logging the error, attempting recovery, or notifying the user.
+**Fix:** Replace `panic` with a more robust error handling strategy, such as returning an error code, retrying the operation, or entering a safe mode.
+
+---
+
+### 47. Inconsistent Error Handling in fs_open_custom
+**File:** `http_server.c`
+**Lines:** 160, 166
+**Description:** In `fs_open_custom`, if `web_access_is_enabled()` or `kb.status == locked` is true, the function returns `0` (indicating file not found) instead of an appropriate HTTP status code like 403 Forbidden.
+```c
+if (!web_access_is_enabled()) {
+    LOG_INFO("GET /macros.txt denied - web access disabled\n");
+    return 0;  // Not found
+}
+// ...
+if (kb.status == locked) {
+    LOG_INFO("GET /macros.txt denied - device locked\n");
+    return 0;  // Not found
+}
+```
+**Impact:** Returning `0` for a denied request can be misleading to clients, as it suggests the resource does not exist rather than access being forbidden. This can complicate client-side error handling and user feedback.
+**Fix:** Implement a mechanism to return a proper HTTP status code (e.g., 403 Forbidden) when access is denied, instead of simply returning `0`.
+
+---
+
+### 51. No error handling for mDNS initialization
+**File:** `wifi_config.c`
+**Lines:** 100-101
+**Description:** The `mdns_resp_init()` and `mdns_resp_add_netif()` functions are called without checking their return values.
+```c
+mdns_resp_init();
+mdns_resp_add_netif(netif_list, "hidproxy");
+```
+**Impact:** If mDNS initialization or adding the network interface fails, the system will continue without any indication of the failure. This can lead to the mDNS service not being available, making it difficult to discover the device on the network.
+**Fix:** Check the return values of `mdns_resp_init()` and `mdns_resp_add_netif()`. Log errors if they fail and potentially attempt to reinitialize or disable mDNS functionality gracefully.
+
+---
+
+### 52. Panic in add_to_host_queue on data length mismatch
+**File:** `hid_proxy.h`
+**Line:** 140
+**Description:** The `add_to_host_queue` inline function calls `panic` if the provided `len` is greater than `sizeof(item.data)`.
+```c
+if (len > sizeof(item.data)) {
+    panic("Asked to send %d bytes of data", len);
+}
+```
+**Impact:** An attempt to send a report with a length exceeding the buffer size will cause the system to halt due to an unhandled `panic`. This can lead to a denial of service if a malformed report is generated or received.
+**Fix:** Replace `panic` with a more robust error handling strategy, such as returning an error code, logging a warning, or truncating the data to fit the buffer, rather than crashing the system.
+
+---
+
 ## LOW SEVERITY / CODE QUALITY ISSUES
 
 ### 26. Duplicate Authentication Keys in Array
@@ -399,15 +510,144 @@ if (!kb.send_to_host_in_progress && queue_try_remove(&tud_to_physical_host_queue
 
 ---
 
-### 30. No Validation of Flash Magic After Decryption
+### 41. Assert used for input validation
 **File:** `encryption.c`
-**Lines:** 84-86
-**Description:** Only checks if magic matches encrypted_magic, doesn't validate against expected constant.
+**Lines:** 19, 25
+**Description:** The `assert` macro is used for input validation in `enc_set_key` and `enc_get_key`.
 ```c
-bool ret = memcmp(s->magic, s->encrypted_magic, sizeof(s->magic)) == 0;
+assert(length <= sizeof(key));
 ```
-**Impact:** If both magic values are corrupted identically, this would incorrectly return true.
-**Fix:** Also verify `memcmp(s->magic, FLASH_STORE_MAGIC, sizeof(s->magic)) == 0`.
+**Impact:** In a release build, `assert` statements are typically removed, meaning these checks would not be performed. This could lead to buffer overflows if `length` is greater than `sizeof(key)` in a production environment.
+**Fix:** Replace `assert` with explicit runtime checks (e.g., `if` statements) and appropriate error handling (e.g., returning an error code or logging a warning) that remain active in release builds.
+
+---
+
+### 44. Inefficient flash writing
+**File:** `flash.c`
+**Line:** 10
+**Description:** The `save_state` function erases and programs the entire `FLASH_STORE_SIZE` even if only a small portion of the data has changed.
+```c
+// TODO - we only need to write used portion (save on erases).
+```
+**Impact:** This leads to unnecessary wear on the flash memory and can increase the time taken for save operations. In embedded systems, flash memory has a limited number of write/erase cycles.
+**Fix:** Implement logic to only write the portions of the flash memory that have actually been modified, as suggested by the `TODO` comment. This would require tracking changes or using a more sophisticated flash management scheme.
+
+---
+
+### 48. Hardcoded HTML content for HTTP response pages
+**File:** `http_pages.h`
+**Lines:** Throughout the file
+**Description:** The HTML content for HTTP response pages (e.g., 403, Locked, Success, Error, 404) is hardcoded as C strings within the `http_pages.h` header file.
+```c
+static const char http_403_page[] =
+    "HTTP/1.1 403 Forbidden\r\n"
+    "Content-Type: text/html\r\n"
+    "Connection: close\r\n\r\n"
+    "<!DOCTYPE html><html><head><title>403 Forbidden</title></head>"
+    "<body><h1>403 Forbidden</h1>"
+    "<p>Web access not enabled. Press both shifts + HOME on the keyboard to enable access for 5 minutes.</p>"
+    "</body></html>";
+```
+**Impact:** Modifying the appearance, content, or localization of these pages requires recompiling the firmware. This makes maintenance and updates more cumbersome and less flexible.
+**Fix:** Consider storing HTML templates in a separate, easily modifiable format (e.g., on the filesystem or in a dedicated flash section) and dynamically serving them. Alternatively, use a templating engine if resources permit, or at least externalize the content into separate files that can be included during the build process.
+
+---
+
+### 53. No timestamp or context in log messages
+**File:** `logging.h`
+**Lines:** 10-17
+**Description:** The logging macros (`LOG_DEBUG`, `LOG_INFO`, `LOG_ERROR`) only print the provided message without any additional context like timestamps, file names, or line numbers.
+```c
+#define LOG_INFO(...) printf(__VA_ARGS__)
+#define LOG_ERROR(...) printf(__VA_ARGS__)
+```
+**Impact:** Debugging can be significantly harder without contextual information in log messages, especially in embedded systems where real-time behavior and the origin of log events are crucial for diagnosing issues.
+**Fix:** Enhance the logging macros to include useful context such as `__FILE__`, `__LINE__`, `__func__`, and a timestamp. For example: `#define LOG_INFO(...) printf("[%s:%d] INFO: ", __FILE__, __LINE__); printf(__VA_ARGS__)`.
+
+---
+
+### 54. LOG_TRACE is always disabled
+**File:** `logging.h`
+**Line:** 8
+**Description:** The `LOG_TRACE` macro is unconditionally defined as an empty macro, effectively disabling all trace-level logging.
+```c
+#define LOG_TRACE(...)
+```
+**Impact:** Trace-level logging, which is typically used for very fine-grained debugging information, is unavailable. This can hinder deep-dive debugging and performance analysis when detailed execution flow is needed.
+**Fix:** Implement `LOG_TRACE` to be conditionally enabled, similar to `LOG_DEBUG`, perhaps based on a more granular `DEBUG_LEVEL` macro, allowing it to be activated when needed.
+
+---
+
+### 55. Redundant next_keydef definition
+**File:** `macros.h` and `key_defs.c`
+**Lines:** `macros.h`: 11-16, `key_defs.c`: 16-21
+**Description:** The `next_keydef` helper function is defined in both `macros.h` (as `static inline`) and `key_defs.c` (as `static inline`).
+```c
+// In macros.h
+static inline keydef_t *next_keydef(const keydef_t *this) { ... }
+// In key_defs.c
+static inline keydef_t *next_keydef(keydef_t *this) { ... }
+```
+**Impact:** Having two separate definitions for the same logical function can lead to code bloat (each translation unit gets its own copy) and potential inconsistencies if the implementations diverge. It also makes maintenance harder as changes need to be applied in multiple places.
+**Fix:** Consolidate the `next_keydef` function into a single definition. It should ideally be declared in a common header (e.g., `hid_proxy.h` or a new `keydef_utils.h`) and defined in a corresponding `.c` file, or if `static inline` is desired, ensure the implementations are identical and justified.
+
+---
+
+### 56. Duplicate macro definition for PN532_COMMAND_INLISTPASSIVETARGET
+**File:** `nfc_tag.h`
+**Lines:** 18-19
+**Description:** The macro `PN532_COMMAND_INLISTPASSIVETARGET` is defined twice consecutively with the same value.
+```c
+#define PN532_COMMAND_INLISTPASSIVETARGET   (0x4A)
+#define PN532_COMMAND_INLISTPASSIVETARGET   (0x4A)
+```
+**Impact:** While not a functional bug since the values are identical, it is redundant and can be confusing for developers reading the code. It also indicates a lack of attention to detail.
+**Fix:** Remove the duplicate definition, leaving only one instance of `#define PN532_COMMAND_INLISTPASSIVETARGET (0x4A)`.
+
+---
+
+### 57. Duplicate TinyUSB configuration macros
+**File:** `tusb_config.h`
+**Lines:** 44-46, 80-82
+**Description:** Several TinyUSB configuration macros (`CFG_TUH_HID`, `CFG_TUH_HID_EPIN_BUFSIZE`, `CFG_TUH_HID_EPOUT_BUFSIZE`) are defined twice within the header file.
+```c
+#define CFG_TUH_HID                  4
+#define CFG_TUH_HID_EPIN_BUFSIZE    64
+#define CFG_TUH_HID_EPOUT_BUFSIZE   64
+// ... later in file ...
+#define CFG_TUH_HID                  4
+#define CFG_TUH_HID_EPIN_BUFSIZE    64
+#define CFG_TUH_HID_EPOUT_BUFSIZE   64
+```
+**Impact:** While the duplicate definitions currently have identical values and do not cause compilation errors, they are redundant and can lead to confusion. If the values were to diverge, it would introduce subtle and hard-to-debug configuration issues.
+**Fix:** Remove the duplicate definitions, ensuring each configuration macro is defined only once.
+
+---
+
+### 58. Conditional compilation of CDC interface
+**File:** `usb_descriptors.h`
+**Lines:** 29-32
+**Description:** The `ITF_NUM_CDC` and `ITF_NUM_CDC_DATA` enumerations are conditionally compiled based on the `LIB_PICO_STDIO_USB` macro.
+```c
+#ifdef LIB_PICO_STDIO_USB
+    ITF_NUM_CDC,
+    ITF_NUM_CDC_DATA,
+#endif
+```
+**Impact:** This conditional compilation means that the CDC (Communication Device Class) interface, which provides a virtual serial port over USB, may or may not be present depending on the build configuration. This can lead to inconsistencies in device enumeration and functionality if the user expects the CDC interface to always be available, or if different build environments produce different USB descriptors.
+**Fix:** Clearly document the dependency of the CDC interface on `LIB_PICO_STDIO_USB`. If the CDC interface is always intended to be part of the device, consider removing the conditional compilation or ensuring `LIB_PICO_STDIO_USB` is consistently defined. If it's an optional feature, provide clear build instructions for enabling/disabling it.
+
+---
+
+### 59. Fragile padding calculation in wifi_config_t
+**File:** `wifi_config.h`
+**Line:** 16
+**Description:** The `wifi_config_t` struct uses a `reserved` array to pad the structure to a full flash sector, with a hardcoded calculation for its size.
+```c
+uint8_t reserved[4096 - 8 - 32 - 64 - 1];  // Pad to full sector
+```
+**Impact:** This calculation (`4096 - 8 - 32 - 64 - 1`) is fragile. If the size of any preceding fields (`magic`, `ssid`, `password`, `enable_wifi`) changes, or if `WIFI_CONFIG_SIZE` (4096) changes, this calculation will become incorrect, leading to either insufficient padding (and potential buffer overflows into the next flash sector) or excessive padding (wasting flash space).
+**Fix:** Use `sizeof()` for the fields within the calculation to make it more robust. For example: `uint8_t reserved[WIFI_CONFIG_SIZE - sizeof(config.magic) - sizeof(config.ssid) - sizeof(config.password) - sizeof(config.enable_wifi)];`.
 
 ---
 
@@ -464,6 +704,48 @@ AES_CTR_xcrypt_buffer(&ctx, (uint8_t *) s->encrypted_magic, ...);
 **Fix:** Use AES-GCM or add HMAC for authentication.
 
 ---
+
+## Build and Configuration Issues
+
+### 35. Hardcoded PICO_SDK_PATH in CMakeLists.txt
+**File:** `CMakeLists.txt`
+**Line:** 20
+**Description:** The `PICO_SDK_PATH` is hardcoded to `/home/paul/pico/pico-sdk`.
+```cmake
+set(PICO_SDK_PATH /home/paul/pico/pico-sdk)
+```
+**Impact:** This makes the project difficult to build for other users who may have the Pico SDK installed in a different location. It requires manual editing of the `CMakeLists.txt` file.
+**Fix:** Remove the hardcoded path and rely on the user to set the `PICO_SDK_PATH` environment variable. Provide clear instructions in the `README.md` file on how to set up the build environment.
+
+---
+
+## Functional Issues
+
+### 38. Mouse reports not forwarded to host
+**File:** `usb_host.c`
+**Line:** 130
+**Description:** The `handle_mouse_report` function contains a `TODO` comment indicating that mouse reports are not being forwarded to the host.
+```c
+// TODO add_to_host_queue(report->instance, REPORT_ID_MOUSE, len, &report->data);
+```
+**Impact:** Mouse input from the physical keyboard will not be transmitted to the host computer, rendering mouse functionality unusable.
+**Fix:** Implement the `add_to_host_queue` call to correctly forward mouse reports to the host.
+
+---
+
+### 39. Incomplete multi-port USB host support
+**File:** `usb_host.c`
+**Line:** 44
+**Description:** The `core1_main` function contains a `TODO` comment indicating that multi-port USB host support is incomplete.
+```c
+// TODO - to support this properly, we'll have to determine what's been plugged into which port.
+```
+**Impact:** The current implementation only configures one PIO-USB port. If multiple USB devices are connected, only the first one might be recognized or handled correctly, limiting the functionality of the HID proxy.
+**Fix:** Implement logic to properly enumerate and manage multiple USB devices connected to different PIO-USB ports.
+
+---
+
+
 
 ## SUMMARY
 
