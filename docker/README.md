@@ -12,9 +12,15 @@ The Docker image includes:
 - Ubuntu 22.04 LTS base
 - ARM cross-compilation toolchain (gcc-arm-none-eabi)
 - CMake and Ninja build systems
-- Raspberry Pi Pico SDK with submodules pre-compiled for faster builds
+- Raspberry Pi Pico SDK 2.2.0 with submodules pre-compiled for faster builds
+- Pre-built development tools (available in PATH):
+  - **pioasm**: PIO assembler (v2.2.0)
+  - **picotool**: Device loading and info tool (v2.2.0-a4)
+  - **kvstore-util**: KVStore image manipulation tool (from pico-kvstore)
 
-**Note**: Project dependencies (tiny-AES-c, Pico-PIO-USB, tinycrypt) are used as git submodules from your project directory, not embedded in the image.
+**Note**: Project dependencies (tiny-AES-c, Pico-PIO-USB, tinycrypt, pico-kvstore) are used as git submodules from your project directory, not embedded in the image. The pico-kvstore copy in the image is only used for building the kvstore-util host tool.
+
+**See DOCKER_TOOLS.md** for detailed documentation on using pioasm, picotool, and kvstore-util.
 
 ## Quick Start (Recommended)
 
@@ -45,7 +51,8 @@ If you prefer to use Docker directly:
 
 ```bash
 # Build the Docker image (first time only)
-docker build -t pico-bld docker/
+# IMPORTANT: Must run from project root, not from docker/ directory
+docker build -t pico-bld -f docker/Dockerfile .
 
 # Run the build
 docker run --rm -v $(pwd):/home/builder/project pico-bld \
@@ -54,6 +61,8 @@ docker run --rm -v $(pwd):/home/builder/project pico-bld \
 # Outputs in ./build/
 ls build/*.uf2
 ```
+
+**Note**: The Docker build must be run from the project root with `-f docker/Dockerfile .` because it needs to copy the `pico-kvstore` submodule into the image. Running `docker build` from inside the `docker/` directory will fail.
 
 ### Interactive shell:
 
@@ -95,10 +104,10 @@ If you need to rebuild the image (e.g., to update the Pico SDK):
 # Remove old image
 docker rmi pico-bld
 
-# Rebuild
+# Rebuild (from project root)
 ./build.sh
 # or
-docker build -t pico-bld docker/
+docker build -t pico-bld -f docker/Dockerfile .
 ```
 
 ## Flashing the Firmware
