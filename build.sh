@@ -156,7 +156,14 @@ if [[ "$INTERACTIVE" == true ]]; then
     if [[ "$USE_DOCKER" == true ]]; then
         check_docker
         echo -e "${GREEN}Opening interactive shell in Docker container...${NC}"
-        docker compose -f docker/docker-compose.yml run --rm pico-build bash
+
+        # Build the Docker image if it doesn't exist
+        if [[ -z "$(docker images -q pico-bld 2> /dev/null)" ]]; then
+            echo -e "${YELLOW}Building Docker image first...${NC}"
+            docker build -t pico-bld -f docker/Dockerfile .
+        fi
+
+        docker run --rm -it -v "$(pwd):/home/builder/project" pico-bld bash
     else
         echo -e "${YELLOW}Interactive mode only works with Docker${NC}"
         exit 1
@@ -173,7 +180,8 @@ if [[ "$USE_DOCKER" == true ]]; then
     # Build the Docker image if it doesn't exist
     if [[ -z "$(docker images -q pico-bld 2> /dev/null)" ]]; then
         echo -e "${YELLOW}Building Docker image (this may take 5-10 minutes on first run)...${NC}"
-        docker build -t pico-bld docker/
+        # Build from project root to include pico-kvstore submodule
+        docker build -t pico-bld -f docker/Dockerfile .
     fi
 
     # Prepare CMake flags

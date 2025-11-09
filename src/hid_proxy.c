@@ -46,6 +46,8 @@
 #endif
 #include "encryption.h"
 #include "usb_host.h"
+#include "kvstore_init.h"
+#include "keydef_store.h"
 
 #ifdef PICO_CYW43_SUPPORTED
 #include "wifi_config.h"
@@ -77,6 +79,9 @@ queue_t tud_to_physical_host_queue;
 // A queue of events from the physical host, to be sent to the physical keyboard.
 queue_t leds_queue;
 
+// Synchronization flag: Core 1 waits for this before starting USB host stack
+volatile bool kvstore_init_complete = false;
+
 /*------------- MAIN -------------*/
 
 // core0: handle device events
@@ -103,46 +108,54 @@ int main(void) {
     stdio_init_all();
 
     flash_safe_execute_core_init();
+    LOG_INFO("flash_safe_execute_core_init() complete\n");
+
+    // Initialize kvstore EARLY, before launching Core 1
+    LOG_INFO("Starting kvstore_init() (before Core 1 launch)\n");
+    if (!kvstore_init()) {
+        LOG_ERROR("Failed to initialize kvstore!\n");
+        // Continue anyway - device will work without persistent storage
+    }
+    LOG_INFO("kvstore_init() complete\n");
 
     queue_init(&keyboard_to_tud_queue, sizeof(hid_report_t), 12);
     queue_init(&tud_to_physical_host_queue, sizeof(send_data_t), 256);
     queue_init(&leds_queue, 1, 4);
 
-    kb.local_store = malloc(FLASH_STORE_SIZE);
-    lock();
+    LOG_INFO("Setting initial state to locked\n");
+    kb.status = locked;
 
     LOG_INFO("\n\nCore 0 (tud) running\n");
 
+    LOG_INFO("Resetting and launching Core 1\n");
+    multicore_reset_core1();
+    // Launch Core 1 AFTER kvstore is initialized to avoid flash contention
+    multicore_launch_core1(core1_main);
+    LOG_INFO("Core 1 launched\n");
+
+    // Signal Core 1 that initialization is complete (it can start immediately)
+    kvstore_init_complete = true;
+    LOG_INFO("kvstore_init_complete flag set\n");
 
 #ifdef PICO_CYW43_SUPPORTED
-#ifdef ENABLE_USB_STDIO
-    // Delay WiFi init to allow USB CDC to enumerate for debugging
-    // Use a polling loop instead of sleep to keep USB stack running
-    LOG_INFO("Delaying WiFi initialization for 10 seconds (USB CDC debug mode)...\n");
-    absolute_time_t wifi_start_time = make_timeout_time_ms(10000);
-    while (!time_reached(wifi_start_time)) {
-        tud_task(); // Process USB events during the delay
-        tight_loop_contents(); // Yield to other tasks
-    }
-    LOG_INFO("Starting WiFi initialization...\n");
-#endif
     // Initialize WiFi (if configured) - only on Pico W
+    LOG_INFO("Calling wifi_config_init()\n");
     wifi_config_init();
+    LOG_INFO("Calling wifi_init()\n");
     wifi_init();
+    LOG_INFO("WiFi initialization complete\n");
 #else
     LOG_INFO("WiFi not supported on this hardware\n");
 #endif
 
-    multicore_reset_core1();
-    // all USB task run in core1
-    multicore_launch_core1(core1_main);
-
+    LOG_INFO("Entering main loop\n");
     absolute_time_t last_interaction = get_absolute_time();
     status_t previous_status = locked;
 #ifdef PICO_CYW43_SUPPORTED
     bool http_server_started = false;
 #endif
 
+    LOG_INFO("Starting main event loop (first iteration)\n");
     while (true) {
         if (kb.status != previous_status) {
             LOG_INFO("State changed from %s to %s\n", status_string(previous_status), status_string(kb.status));
@@ -182,14 +195,30 @@ int main(void) {
         if (kb.status == locked) {
 #ifdef ENABLE_NFC
             if (nfc_key_available()) {
-                uint8_t key[32];  // Full 32-byte AES-256 key
+                uint8_t key[32];  // Full 32-byte AES-256 key (use first 16 bytes for AES-128)
                 nfc_get_key(key);
-                printf("Setting 32-byte key from NFC\n");
-                hex_dump(key, 32);
-                enc_set_key(key, sizeof(key));
-                read_state(&kb);
-                if (kb.status == locked) {
-                    nfc_bad_key();
+                printf("Setting 16-byte key from NFC\n");
+                hex_dump(key, 16);
+                enc_set_key(key, 16);  // Use first 16 bytes for AES-128
+                kvstore_set_encryption_key(key);
+
+                // Try to verify the key by loading any keydef
+                uint8_t triggers[1];
+                if (keydef_list(triggers, 1) > 0) {
+                    keydef_t *test_def = keydef_load(triggers[0]);
+                    if (test_def != NULL) {
+                        // Key is valid
+                        free(test_def);
+                        kb.status = normal;
+                        printf("NFC authentication successful\n");
+                    } else {
+                        // Key is invalid
+                        nfc_bad_key();
+                    }
+                } else {
+                    // No keydefs stored yet - assume key is valid
+                    kb.status = normal;
+                    printf("NFC key accepted (no keydefs to verify)\n");
                 }
             }
 #endif
@@ -276,8 +305,9 @@ void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report, uint16_
 }
 
 void lock() {
-    memset(kb.local_store, 0, FLASH_STORE_SIZE);
     kb.status = locked;
+    kvstore_clear_encryption_key();  // Clear encryption key from memory
+    enc_clear_key();  // Also clear the key in encryption.c
 }
 
 void hex_dump(void const *ptr, size_t len) {

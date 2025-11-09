@@ -62,42 +62,18 @@ void enc_clear_key() {
     enc_clear_password();
 }
 
+// OBSOLETE: store_encrypt() is no longer needed with kvstore migration
+// kvstore handles encryption automatically via mbedtls
 bool store_encrypt(kb_t *kb) {
-    store_t *s = kb->local_store;
-
-    memcpy(s->magic, FLASH_STORE_MAGIC, sizeof(s->magic));
-    memcpy(s->encrypted_magic, FLASH_STORE_MAGIC, sizeof(s->encrypted_magic));
-    uint64_t rand = get_rand_64();
-    memcpy(s->iv, (void*)&rand, 8);
-    rand = get_rand_64();
-    memcpy(s->iv + 8, (void*)&rand, 8);
-
-    struct AES_ctx ctx;
-
-    // TODO - we only need to encrypt *used* portion.
-    AES_init_ctx_iv(&ctx, key, s->iv);
-    AES_CTR_xcrypt_buffer(&ctx, (uint8_t *) s->encrypted_magic, FLASH_STORE_SIZE - offsetof(store_t, encrypted_magic));
-
-    LOG_INFO("store_encrypt:\n");
-    hex_dump(key, 32);
-
+    LOG_INFO("store_encrypt() is obsolete with kvstore migration\n");
+    (void)kb;
     return true;
 }
 
+// OBSOLETE: store_decrypt() is no longer needed with kvstore migration
+// kvstore handles decryption automatically via mbedtls
 bool store_decrypt(kb_t *kb) {
-    store_t *s = kb->local_store;
-
-    struct AES_ctx ctx;
-    AES_init_ctx_iv(&ctx, key, s->iv);
-    AES_CTR_xcrypt_buffer(&ctx, (uint8_t *) s->encrypted_magic, FLASH_STORE_SIZE - offsetof(store_t, encrypted_magic));
-
-    bool ret = memcmp(s->magic, s->encrypted_magic, sizeof(s->magic)) == 0;
-    LOG_INFO("After store_decrypt=%d\n", ret);
-    assert_sane(kb);
-
-    LOG_INFO("store_decrypt:\n");
-    hex_dump(key, 32);
-
-
-    return ret;
+    LOG_INFO("store_decrypt() is obsolete with kvstore migration\n");
+    (void)kb;
+    return true;
 }

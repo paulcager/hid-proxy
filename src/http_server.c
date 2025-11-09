@@ -2,6 +2,7 @@
 #include "wifi_config.h"
 #include "hid_proxy.h"
 #include "macros.h"
+#include "keydef_store.h"
 #include "lwip/tcp.h"
 #include "lwip/apps/httpd.h"
 #include "lwip/apps/fs.h"
@@ -26,11 +27,9 @@ static const char *status_cgi_handler(int iIndex, int iNumParams, char *pcParam[
     (void)pcParam;
     (void)pcValue;
 
-    // Count keydefs
-    int num_macros = 0;
-    for (const keydef_t *ptr = kb.local_store->keydefs; ptr->keycode != 0; ptr = next_keydef(ptr)) {
-        num_macros++;
-    }
+    // Count keydefs from kvstore
+    uint8_t triggers[256];
+    int num_macros = keydef_list(triggers, 256);
 
     uint64_t uptime_ms = to_ms_since_boot(get_absolute_time());
     int expires_in = 0;
@@ -116,10 +115,9 @@ void httpd_post_finished(void *connection, char *response_uri, u16_t response_ur
 
     LOG_INFO("POST finished, parsing %zu bytes\n", http_post_offset);
 
-    // Parse and save to flash
-    if (parse_macros(http_post_buffer, kb.local_store)) {
-        save_state(&kb);
-        LOG_INFO("Macros updated successfully\n");
+    // Parse and save directly to kvstore
+    if (parse_macros_to_kvstore(http_post_buffer)) {
+        LOG_INFO("Macros updated successfully in kvstore\n");
         snprintf(response_uri, response_uri_len, "/success.html");
     } else {
         LOG_ERROR("Failed to parse macros\n");
@@ -142,10 +140,10 @@ int fs_open_custom(struct fs_file *file, const char *name) {
             return 0;  // Not found
         }
 
-        // Serialize macros
+        // Serialize macros from kvstore
         memset(http_macros_buffer, 0, sizeof(http_macros_buffer));
-        if (!serialize_macros((const store_t*)kb.local_store, http_macros_buffer, sizeof(http_macros_buffer))) {
-            LOG_ERROR("Failed to serialize macros\n");
+        if (!serialize_macros_from_kvstore(http_macros_buffer, sizeof(http_macros_buffer))) {
+            LOG_ERROR("Failed to serialize macros from kvstore\n");
             return 0;
         }
 
