@@ -19,3 +19,6 @@
 [submodule "cdc_stdio_lib"]
 	path = cdc_stdio_lib
 	url = https://github.com/rppicomidi/cdc_stdio_lib.git
+[submodule "pico-kvstore"]
+	path = pico-kvstore
+	url = git@github.com:oyama/pico-kvstore.git

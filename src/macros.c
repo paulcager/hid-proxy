@@ -247,15 +247,15 @@ static uint8_t parse_trigger(const char** p) {
 
 // Add a report to the current definition
 static bool add_report(keydef_t* current_def, uint8_t mod, uint8_t key, void* limit) {
-    if ((void*)&current_def->reports[current_def->used + 1] >= limit) {
+    if ((void*)&current_def->reports[current_def->count + 1] >= limit) {
         return false;
     }
-    current_def->reports[current_def->used].modifier = mod;
-    current_def->reports[current_def->used].keycode[0] = key;
+    current_def->reports[current_def->count].modifier = mod;
+    current_def->reports[current_def->count].keycode[0] = key;
     for (int i = 1; i < 6; i++) {
-        current_def->reports[current_def->used].keycode[i] = 0;
+        current_def->reports[current_def->count].keycode[i] = 0;
     }
-    current_def->used++;
+    current_def->count++;
     return true;
 }
 
@@ -276,6 +276,24 @@ bool parse_macros(const char* input_buffer, store_t* temp_store) {
 
         if (!*p) break;
 
+        // Parse optional [public] or [private] modifier
+        bool require_unlock = true;  // Default to private
+        if (*p == '[') {
+            p++;
+            if (strncmp(p, "public", 6) == 0) {
+                require_unlock = false;
+                p += 6;
+            } else if (strncmp(p, "private", 7) == 0) {
+                require_unlock = true;
+                p += 7;
+            }
+            // Skip to ']'
+            while (*p && *p != ']') p++;
+            if (*p == ']') p++;
+            // Skip whitespace after ]
+            while (*p && isspace((unsigned char)*p)) p++;
+        }
+
         // Parse trigger
         uint8_t trigger = parse_trigger(&p);
 
@@ -286,8 +304,9 @@ bool parse_macros(const char* input_buffer, store_t* temp_store) {
 
         // Create new keydef
         keydef_t* current_def = (keydef_t*)ptr;
-        current_def->keycode = trigger;
-        current_def->used = 0;
+        current_def->trigger = trigger;
+        current_def->count = 0;
+        current_def->require_unlock = require_unlock;
 
         // Parse commands until '}'
         while (*p && *p != '}') {
@@ -370,11 +389,11 @@ bool parse_macros(const char* input_buffer, store_t* temp_store) {
         if (*p == '}') p++;
 
         // Move to next keydef slot
-        ptr += sizeof(keydef_t) + (current_def->used * sizeof(hid_keyboard_report_t));
+        ptr += sizeof(keydef_t) + (current_def->count * sizeof(hid_keyboard_report_t));
     }
 
     // Terminator
-    ((keydef_t*)ptr)->keycode = 0;
+    ((keydef_t*)ptr)->trigger = 0;
 
     return true;
 }
@@ -403,35 +422,42 @@ bool serialize_macros(const store_t* store, char* output_buffer, size_t buffer_s
     char* p = output_buffer;
     char* const limit = output_buffer + buffer_size;
 
-    p += snprintf(p, limit - p, "# Macros file - Format: trigger { commands... }\n");
-    p += snprintf(p, limit - p, "# Commands: \"text\" MNEMONIC ^C [mod:key]\n\n");
+    p += snprintf(p, limit - p, "# Macros file - Format: [public|private] trigger { commands... }\n");
+    p += snprintf(p, limit - p, "# Commands: \"text\" MNEMONIC ^C [mod:key]\n");
+    p += snprintf(p, limit - p, "# [public] keydefs work when device is locked\n");
+    p += snprintf(p, limit - p, "# [private] keydefs require device unlock (default)\n\n");
     if (p >= limit) panic("Buffer overflow in serializer header");
 
-    for (const keydef_t* def = store->keydefs; def->keycode != 0 && (void*)def < (void*)store + FLASH_STORE_SIZE; def = next_keydef(def)) {
-        // Write trigger (prefer mnemonic or ASCII)
-        const char* mnemonic = keycode_to_mnemonic(def->keycode);
-        char ascii = keycode_to_ascii(def->keycode, 0);
+    for (const keydef_t* def = store->keydefs; def->trigger != 0 && (void*)def < (void*)store + FLASH_STORE_SIZE; def = next_keydef(def)) {
+        // Write [public] or [private] modifier
+        const char* privacy = def->require_unlock ? "[private] " : "[public] ";
+        int written = snprintf(p, limit - p, "%s", privacy);
+        if (written < 0 || p + written >= limit) panic("Buffer overflow in serializer");
+        p += written;
 
-        int written;
+        // Write trigger (prefer mnemonic or ASCII)
+        const char* mnemonic = keycode_to_mnemonic(def->trigger);
+        char ascii = keycode_to_ascii(def->trigger, 0);
+
         if (mnemonic) {
             written = snprintf(p, limit - p, "%s { ", mnemonic);
         } else if (ascii >= 32 && ascii <= 126) {
             written = snprintf(p, limit - p, "%c { ", ascii);
         } else {
-            written = snprintf(p, limit - p, "0x%02x { ", def->keycode);
+            written = snprintf(p, limit - p, "0x%02x { ", def->trigger);
         }
         if (written < 0 || p + written >= limit) panic("Buffer overflow in serializer");
         p += written;
 
         // Serialize reports - try to detect text sequences
-        for (int i = 0; i < def->used; ) {
+        for (int i = 0; i < def->count; ) {
             // Check if this is a printable character sequence (press + release pairs)
             bool is_text_sequence = false;
             int text_start = i;
             int text_len = 0;
 
             // Look for text sequences: press with ASCII, then release
-            while (i + 1 < def->used &&
+            while (i + 1 < def->count &&
                    def->reports[i + 1].modifier == 0 &&
                    def->reports[i + 1].keycode[0] == 0) {
                 char ch = keycode_to_ascii(def->reports[i].keycode[0], def->reports[i].modifier);

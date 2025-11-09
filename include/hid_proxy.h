@@ -47,6 +47,7 @@ typedef enum {
     blank_seen_magic,
     locked,
     locked_seen_magic,
+    locked_expecting_command,
     entering_password,
     normal,
     seen_magic,
@@ -66,6 +67,8 @@ inline const char *status_string(status_t s) {
             return "locked";
         case locked_seen_magic:
             return "locked_seen_magic";
+        case locked_expecting_command:
+            return "locked_expecting_command";
         case entering_password:
             return "entering_password";
         case normal:
@@ -85,10 +88,12 @@ inline const char *status_string(status_t s) {
     }
 }
 
+// Unified keydef structure (used by both kvstore and legacy flash parsing)
 typedef struct keydef {
-    int keycode;
-    int used;
-    hid_keyboard_report_t reports[0];
+    uint8_t trigger;           // HID keycode that triggers this macro (was 'keycode')
+    uint16_t count;            // Number of HID reports in the sequence (was 'used')
+    bool require_unlock;       // Does this keydef require device unlock? (Phase 4)
+    hid_keyboard_report_t reports[0];  // Variable-length array of HID reports
 } keydef_t;
 
 #define FLASH_STORE_MAGIC ("hidprox6")

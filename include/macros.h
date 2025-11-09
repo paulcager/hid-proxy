@@ -13,7 +13,7 @@ bool serialize_macros(const store_t* store, char* output_buffer, size_t buffer_s
 // Helper function to iterate through keydefs
 static inline keydef_t *next_keydef(const keydef_t *this) {
     const void *t = this;
-    t += sizeof(keydef_t) + (this->used * sizeof(hid_keyboard_report_t));
+    t += sizeof(keydef_t) + (this->count * sizeof(hid_keyboard_report_t));
     return (keydef_t*)t;
 }
 

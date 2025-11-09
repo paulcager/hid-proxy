@@ -28,7 +28,7 @@ static const char *status_cgi_handler(int iIndex, int iNumParams, char *pcParam[
 
     // Count keydefs
     int num_macros = 0;
-    for (const keydef_t *ptr = kb.local_store->keydefs; ptr->keycode != 0; ptr = next_keydef(ptr)) {
+    for (const keydef_t *ptr = kb.local_store->keydefs; ptr->trigger != 0; ptr = next_keydef(ptr)) {
         num_macros++;
     }
 

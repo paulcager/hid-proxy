@@ -1,14 +1,17 @@
 # Session Summary - WiFi/HTTP Implementation
 
 ## Date
+
 2025-11-04
 
 ## What Was Done
 
 ### 1. Removed USB Mass Storage (MSC) Mode
+
 **Reason**: MSC mode required USB re-enumeration, losing keyboard functionality during configuration.
 
 **Changes:**
+
 - Deleted `src/msc_disk.c` (~207 lines)
 - Removed MSC boot logic and double-shift+Equal trigger
 - Disabled MSC in USB configuration (CFG_TUD_MSC = 0)
@@ -18,7 +21,9 @@
 **Net**: ~400 lines removed
 
 ### 2. Implemented WiFi/HTTP Configuration (Pico W)
+
 **Features:**
+
 - Non-blocking WiFi connection using CYW43 chip
 - HTTP API endpoints: GET/POST /macros.txt, GET /status
 - Physical unlock: both-shifts+HOME enables 5-minute web access
@@ -26,6 +31,7 @@
 - Security: requires physical presence + unlocked device
 
 **Files Added:**
+
 - `src/wifi_config.c` (146 lines) - WiFi management
 - `src/http_server.c` (199 lines) - HTTP server with lwIP
 - `include/wifi_config.h` (43 lines)
@@ -36,26 +42,32 @@
 **Net**: ~829 lines added
 
 ### 3. Made WiFi Support Conditional (Pico and Pico W)
+
 **Reason**: Support both regular Pico (no WiFi) and Pico W (with WiFi) from same codebase.
 
 **Changes:**
+
 - Added `#ifdef PICO_CYW43_SUPPORTED` guards throughout
 - Conditional compilation of WiFi sources in CMakeLists.txt
 - Updated build.sh with `--board` option (pico or pico_w)
 - Created BUILD_NOTES.md explaining dual-board support
 
 **Result**:
+
 - Regular Pico: ~95KB binary, no WiFi
 - Pico W: ~180KB binary, full WiFi/HTTP support
 
 ### 4. Updated Documentation
+
 **Files Modified:**
+
 - `README.md` - Updated for WiFi/HTTP, removed MSC references
 - `CLAUDE.md` - Added WiFi architecture, code locations
 - `CONFIGURATION_OPTIONS.md` - Already had planned implementation
 - `build.sh` - Added board selection, removed MSC references
 
 **Files Created:**
+
 - `WIFI_SETUP.md` - Complete WiFi/HTTP usage guide
 - `BUILD_NOTES.md` - Building for different hardware
 - `SESSION_SUMMARY.md` - This file
@@ -63,26 +75,27 @@
 ## Git Commits Created
 
 1. **"Remove USB Mass Storage (MSC) mode"**
-   - Cleaned up MSC code (~400 lines)
-   - Preserved macros.c for HTTP API
+    - Cleaned up MSC code (~400 lines)
+    - Preserved macros.c for HTTP API
 
 2. **"Implement WiFi/HTTP configuration for Pico W"**
-   - Added WiFi and HTTP server (~829 lines)
-   - Full HTTP API implementation
-   - Physical unlock security
+    - Added WiFi and HTTP server (~829 lines)
+    - Full HTTP API implementation
+    - Physical unlock security
 
 3. **"Update README.md for WiFi/HTTP and remove MSC references"**
-   - Updated README for new features
-   - Clarified Pico vs Pico W
+    - Updated README for new features
+    - Clarified Pico vs Pico W
 
 4. **"Make WiFi support conditional for both Pico and Pico W"**
-   - Conditional compilation
-   - Board selection in build system
-   - Documentation updates
+    - Conditional compilation
+    - Board selection in build system
+    - Documentation updates
 
 ## Usage Examples
 
 ### Building
+
 ```bash
 # For Pico W (default)
 ./build.sh
@@ -95,6 +108,7 @@
 ```
 
 ### HTTP API (Pico W only)
+
 ```bash
 # 1. Press both-shifts+HOME on keyboard
 # 2. Download macros
@@ -113,16 +127,19 @@ curl http://hidproxy.local/status
 ## Architecture Overview
 
 ### WiFi Configuration
+
 - Stored in flash at FLASH_STORE_OFFSET + 4KB (separate from encrypted keydefs)
 - Format: magic, SSID, password, enable flag
 - Non-blocking connection (keyboard stays responsive)
 
 ### HTTP Server
+
 - lwIP-based server with custom filesystem handlers
 - Endpoints protected by web access control
 - Converts binary keydefs ↔ text format on demand
 
 ### Security Model
+
 1. Device must be unlocked (passphrase or NFC)
 2. Physical unlock required (both-shifts+HOME)
 3. Web access expires after 5 minutes
@@ -130,43 +147,43 @@ curl http://hidproxy.local/status
 
 ### Key Components
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| WiFi manager | src/wifi_config.c | CYW43 connection, web access control |
-| HTTP server | src/http_server.c | lwIP server, endpoint handlers |
-| Physical unlock | src/key_defs.c | both-shifts+HOME trigger |
-| Macro parser | src/macros.c | Text ↔ binary conversion |
-| Main loop integration | src/hid_proxy.c | WiFi/HTTP tasks |
+| Component             | Location          | Purpose                              |
+|-----------------------|-------------------|--------------------------------------|
+| WiFi manager          | src/wifi_config.c | CYW43 connection, web access control |
+| HTTP server           | src/http_server.c | lwIP server, endpoint handlers       |
+| Physical unlock       | src/key_defs.c    | both-shifts+HOME trigger             |
+| Macro parser          | src/macros.c      | Text ↔ binary conversion             |
+| Main loop integration | src/hid_proxy.c   | WiFi/HTTP tasks                      |
 
 ## Feature Matrix
 
-| Feature | Regular Pico | Pico W |
-|---------|-------------|--------|
-| USB HID proxy | ✅ | ✅ |
-| Text expansion/macros | ✅ | ✅ |
-| Encrypted flash storage | ✅ | ✅ |
-| Passphrase unlock | ✅ | ✅ |
-| NFC authentication | ✅ | ✅ |
-| Interactive define mode | ✅ | ✅ |
-| WiFi connectivity | ❌ | ✅ |
-| HTTP API | ❌ | ✅ |
-| mDNS (hidproxy.local) | ❌ | ✅ |
-| Physical web unlock | ❌ | ✅ |
+| Feature                 | Regular Pico | Pico W |
+|-------------------------|--------------|--------|
+| USB HID proxy           | ✅            | ✅      |
+| Text expansion/macros   | ✅            | ✅      |
+| Encrypted flash storage | ✅            | ✅      |
+| Passphrase unlock       | ✅            | ✅      |
+| NFC authentication      | ✅            | ✅      |
+| Interactive define mode | ✅            | ✅      |
+| WiFi connectivity       | ❌            | ✅      |
+| HTTP API                | ❌            | ✅      |
+| mDNS (hidproxy.local)   | ❌            | ✅      |
+| Physical web unlock     | ❌            | ✅      |
 
 ## Known Limitations
 
 1. **WiFi setup**: Currently requires manual flash programming
-   - **Future**: Serial console for WiFi configuration
+    - **Future**: Serial console for WiFi configuration
 
 2. **HTTP only**: No HTTPS encryption
-   - **Acceptable**: Use on trusted LAN only
-   - **Mitigation**: Physical unlock required
+    - **Acceptable**: Use on trusted LAN only
+    - **Mitigation**: Physical unlock required
 
 3. **No web UI**: Text-based API only
-   - **Future**: Simple HTML editor page
+    - **Future**: Simple HTML editor page
 
 4. **No MQTT yet**: Only HTTP API implemented
-   - **Future**: MQTT publishing to Home Assistant
+    - **Future**: MQTT publishing to Home Assistant
 
 ## Next Steps (Future Work)
 
@@ -179,6 +196,7 @@ curl http://hidproxy.local/status
 ## Important Code Locations
 
 ### WiFi/HTTP
+
 - `wifi_init()` - src/wifi_config.c:56
 - `wifi_task()` - src/wifi_config.c:92
 - `web_access_enable()` - src/wifi_config.c:125
@@ -188,6 +206,7 @@ curl http://hidproxy.local/status
 - `status_cgi_handler()` - src/http_server.c:18 (GET /status)
 
 ### Integration Points
+
 - Main loop WiFi tasks: src/hid_proxy.c:128-136
 - Physical unlock trigger: src/key_defs.c:43-49
 - Conditional compilation: All #ifdef PICO_CYW43_SUPPORTED blocks
@@ -195,12 +214,14 @@ curl http://hidproxy.local/status
 ## Testing Checklist
 
 ### Regular Pico Build
+
 - [ ] Compiles without WiFi libraries
 - [ ] No WiFi log messages on boot
 - [ ] both-shifts+HOME does nothing (no crash)
 - [ ] All other features work (encryption, NFC, macros)
 
 ### Pico W Build
+
 - [ ] WiFi initialization on boot
 - [ ] Connects to configured network
 - [ ] mDNS responds at hidproxy.local

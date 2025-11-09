@@ -5,16 +5,12 @@
 #include <stdbool.h>
 #include "pico/time.h"
 
-// WiFi configuration stored in separate flash sector from encrypted keydefs
-#define WIFI_CONFIG_MAGIC "hidwifi1"
-#define WIFI_CONFIG_SIZE 4096  // One flash sector
-
+// WiFi configuration now stored in kvstore (no longer uses flash sectors directly)
 typedef struct {
-    char magic[8];
     char ssid[32];
     char password[64];
+    char country[3];  // ISO 3166-1 alpha-2 country code (e.g., "US", "UK")
     bool enable_wifi;
-    uint8_t reserved[4096 - sizeof(char[8]) - sizeof(char[32]) - sizeof(char[64]) - sizeof(bool)];  // Pad to full sector
 } wifi_config_t;
 
 // Web access state (in RAM, not persisted)

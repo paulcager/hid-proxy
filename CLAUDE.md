@@ -45,15 +45,22 @@ Communication between cores uses three queues:
 
 **Macro Parsing/Serialization** (macros.c/h): Provides text format parser and serializer to convert between binary keydef format and human-readable text format with syntax: `trigger { "text" MNEMONIC ^C [mod:key] }`. These functions will be used for future network-based configuration (HTTP API).
 
-**Encryption** (encryption.c/h): Uses SHA256 for key derivation from passphrase and AES (via tiny-AES-c) for encrypting key definitions stored in flash. IV is randomly generated and stored alongside encrypted data.
+**Storage** (kvstore_init.c, keydef_store.c): Uses pico-kvstore for persistent storage with three layers:
+- blockdevice_flash: Raw flash access with wear leveling
+- kvstore_logkvs: Log-structured key-value store
+- kvstore_securekvs: AES-128-GCM encryption layer
 
-**Flash Storage** (flash.c): Persists encrypted key definitions at `FLASH_STORE_OFFSET` (512KB). Uses Pico SDK's `flash_safe_execute` for multicore-safe flash writes.
+Key definitions are stored as individual key-value pairs (`keydef.0xHH`) and loaded on-demand, reducing memory usage. Public keydefs work when device is locked; private keydefs require unlock.
+
+**Encryption** (encryption.c/h): Uses PBKDF2 (SHA256-based) for key derivation from passphrase. Actual encryption/decryption is handled by kvstore's mbedtls integration (AES-128-GCM with authentication). Legacy `store_encrypt()`/`store_decrypt()` functions marked obsolete.
+
+**Flash Storage** (flash.c): Legacy file with backward-compatibility stubs. Functions like `save_state()` and `read_state()` are now no-ops; kvstore handles all persistence. `init_state()` clears kvstore and resets device to blank state.
 
 **NFC Authentication** (nfc_tag.c): *Optional feature, disabled by default.* Interfaces with PN532 NFC reader via I2C (GPIO 4/5) to read/write 16-byte encryption keys from Mifare Classic tags. Supports multiple known authentication keys for tag access. Enable with `--nfc` build flag.
 
 **USB Configuration** (tusb_config.h): Configures device stack with keyboard, mouse, and CDC interfaces. Host stack (via PIO-USB on GPIO2/3) configured for keyboard/mouse input.
 
-**WiFi Configuration** (wifi_config.c/h): Manages WiFi connection using CYW43 chip on Pico W. Stores WiFi credentials in flash (separate from encrypted keydefs). Provides non-blocking WiFi connection that runs in background without affecting keyboard functionality.
+**WiFi Configuration** (wifi_config.c/h): Manages WiFi connection using CYW43 chip on Pico W. Stores WiFi credentials in kvstore (`wifi.ssid`, `wifi.password` [encrypted], `wifi.country`). Provides non-blocking WiFi connection that runs in background without affecting keyboard functionality.
 
 **HTTP Server** (http_server.c/h): Implements lwIP-based HTTP server for macro configuration. Provides REST-like endpoints for GET/POST of macros in text format. Integrates with physical unlock system (both-shifts+SPACE) for security.
 
@@ -65,7 +72,7 @@ Prevents remote configuration without physical keyboard access.
 ### Prerequisites
 - **Raspberry Pi Pico/Pico W/Pico2/Pico2 W**
 - Docker (recommended) or local Pico SDK 2.2.0+
-- Submodules initialized: `Pico-PIO-USB`, `tiny-AES-c`, `tinycrypt`
+- Submodules initialized: `Pico-PIO-USB`, `pico-kvstore`, `tiny-AES-c`, `tinycrypt`
 
 ### Quick Build with Docker
 ```bash
@@ -135,8 +142,10 @@ These commands activate while holding both shift keys (not released):
 
 ## Macro Text Format
 
-The text format for macros (used for future HTTP/network configuration):
-- `trigger { commands... }` - whitespace flexible
+The text format for macros (used for HTTP/network configuration):
+- `[public|private] trigger { commands... }` - whitespace flexible
+- `[public]` - keydef works even when device is locked (no sensitive data)
+- `[private]` - keydef requires device unlock (default, for passwords/secrets)
 - `"text"` - quoted strings for typing (supports `\"` and `\\` escapes)
 - `MNEMONIC` - special keys (ENTER, ESC, TAB, F1-F24, arrows, PAGEUP, etc.)
 - `^C` - Ctrl+key shorthand (^A through ^Z)
@@ -145,20 +154,26 @@ The text format for macros (used for future HTTP/network configuration):
 
 **Example:**
 ```
-a { "Hello!" }
-F1 { "Help" ENTER }
-F2 { ^C "text" ^V }
+[public] a { "Hello!" }
+[private] F1 { "MyPassword123" ENTER }
+[public] F2 { ^C "text" ^V }
 ```
+
+**Note:** Public keydefs can be executed when the device is locked (via double-shift + key), while private keydefs require the device to be unlocked first.
 
 ## Important Code Locations
 
 - Main state machine: `handle_keyboard_report()` in key_defs.c
-- Key definition evaluation: `evaluate_keydef()` in key_defs.c (called from state machine)
-- Interactive key definition: `start_define()` in key_defs.c
+- Key definition evaluation: `evaluate_keydef()` in key_defs.c (loads on-demand from kvstore)
+- Interactive key definition: `start_define()` in key_defs.c (saves to kvstore when complete)
 - Physical unlock trigger: key_defs.c (both-shifts+HOME handler)
-- Macro parser: `parse_macros()` in macros.c:262
-- Macro serializer: `serialize_macros()` in macros.c:321
-- Flash encryption/decryption: encryption.c with `store_encrypt()`/`store_decrypt()`
+- KVStore initialization: `kvstore_init()` in kvstore_init.c
+- Keydef storage API: `keydef_save()`, `keydef_load()`, `keydef_delete()`, `keydef_list()` in keydef_store.c
+- Macro parser: `parse_macros()` in macros.c (supports `[public]`/`[private]` syntax)
+- Macro serializer: `serialize_macros()` in macros.c (outputs privacy markers)
+- PBKDF2 key derivation: `enc_derive_key_from_password()` in encryption.c
+- Encryption/decryption: Handled by kvstore's mbedtls integration (AES-128-GCM)
+- Legacy stubs: `store_encrypt()`/`store_decrypt()` in encryption.c (marked obsolete)
 - NFC state machine: `nfc_task()` in nfc_tag.c:373
 - USB host enumeration: `tuh_hid_mount_cb()` in usb_host.c:74
 - WiFi initialization: `wifi_init()` in wifi_config.c
@@ -170,25 +185,27 @@ F2 { ^C "text" ^V }
 
 ## Configuration Constants
 
-- `FLASH_STORE_OFFSET`: 512KB (hid_proxy.h:17)
-- `FLASH_STORE_SIZE`: One flash sector (4KB) (hid_proxy.h:12)
-- `WIFI_CONFIG_OFFSET`: FLASH_STORE_OFFSET + 4KB (wifi_config.c)
-- `WIFI_CONFIG_SIZE`: One flash sector (4KB) (wifi_config.h)
+- `KVSTORE_SIZE`: 128KB for kvstore flash storage (kvstore_init.h)
+- `KVSTORE_OFFSET`: 0x1E0000 (last 128KB of 2MB flash) (kvstore_init.h)
+- `FLASH_STORE_SIZE`: Legacy constant, still used for temp_store buffer (hid_proxy.h:12)
 - `IDLE_TIMEOUT_MILLIS`: 120 minutes before auto-lock (hid_proxy.h:20)
 - Web access timeout: 5 minutes (wifi_config.c:web_access_enable)
 - NFC key storage address: Block `0x3A` on Mifare tag (nfc_tag.c:18)
 - I2C pins: SDA=4, SCL=5; PIO-USB pins: DP=2 (nfc_tag.c:12-13, usb_host.c:38)
 - mDNS hostname: `hidproxy.local` (wifi_config.c:106)
+- Keydef key format: `keydef.0xHH` where HH is HID code (keydef_store.c)
+- WiFi key format: `wifi.ssid`, `wifi.password`, `wifi.country` (wifi_config.c)
 
 ## Known Issues/TODOs
 
 From README.md and code comments:
-1. No buffer overflow protection on keystroke storage
-2. Basic encryption implementation (not production-ready)
+1. ~~No buffer overflow protection on keystroke storage~~ ✅ Fixed: Keydef size limits enforced in Phase 3
+2. ~~Basic encryption implementation (not production-ready)~~ ✅ Improved: Now uses AES-128-GCM with authentication
 3. Poor user interface with no status feedback
 4. Code quality issues acknowledged by author
 5. Queue overflow handling needed (hid_proxy.c comment)
 6. USB stdio disabled for production (CMakeLists.txt:84-85 TODOs)
+7. Legacy flash.c code can be fully removed (currently stubs remain for compatibility)
 
 ## WiFi/HTTP Configuration
 

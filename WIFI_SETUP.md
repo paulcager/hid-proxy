@@ -32,22 +32,9 @@ On the first boot, the device will automatically save these credentials to its f
 
 ### Option 2: Manual Flash Programming (Advanced)
 
-If you cannot use the `.env` method, you can manually write the WiFi configuration directly to the device's flash memory.
+**Note:** With the kvstore migration (November 2025), WiFi credentials are now stored in kvstore key-value pairs rather than a fixed flash sector. Manual flash programming is no longer recommended. Use Option 1 (`.env` file) or wait for Option 3 (serial console).
 
-1. Build and flash the firmware normally
-2. Use a flash programming tool to write WiFi config at offset `FLASH_STORE_OFFSET + 4096`
-3. Format:
-   ```c
-   struct {
-       char magic[8];      // "hidwifi1"
-       char ssid[32];      // Your WiFi SSID
-       char password[64];   // Your WiFi password
-       bool enable_wifi;    // 1 = enabled
-       uint8_t reserved[...];
-   }
-   ```
-
-### Option 2: Wait for Serial Console (Recommended)
+### Option 3: Wait for Serial Console (Future)
 
 The serial console implementation (coming soon) will allow you to configure WiFi via UART:
 
@@ -90,14 +77,16 @@ Response:
 curl http://hidproxy.local/macros.txt
 ```
 
-Response:
+Response (updated format as of November 2025):
 ```
-# Macros file - Format: trigger { commands... }
+# Macros file - Format: [public|private] trigger { commands... }
 # Commands: "text" MNEMONIC ^C [mod:key]
+# [public] keydefs work when device is locked
+# [private] keydefs require device unlock (default)
 
-F1 { "Hello World" ENTER }
-F2 { ^C "clipboard text" ^V }
-a { "expanded text" }
+[private] F1 { "Hello World" ENTER }
+[private] F2 { ^C "clipboard text" ^V }
+[public] a { "expanded text" }
 ```
 
 ### 4. Update Macros
@@ -116,16 +105,21 @@ curl -X POST http://hidproxy.local/macros.txt --data-binary @my_macros.txt
 ```
 
 The device will:
-1. Parse the text format
+1. Parse the text format (including `[public]`/`[private]` markers)
 2. Convert to binary format
-3. Encrypt with your passphrase
-4. Write to flash
+3. Store private macros encrypted in kvstore (AES-128-GCM)
+4. Store public macros unencrypted in kvstore
 5. Return success/error page
+
+**Note:** With the kvstore migration (November 2025), macros are stored individually in key-value pairs rather than as a single encrypted block. This enables on-demand loading and selective encryption.
 
 ## Macro Text Format
 
 The text format supports:
 
+- **Privacy markers**: `[public]` or `[private]` prefix (new in November 2025)
+  - `[public]` - Macro works even when device is locked (no sensitive data)
+  - `[private]` - Macro requires device unlock (default, for passwords/secrets)
 - **Quoted strings**: `"Hello World"` - Types text with proper shift/modifiers
 - **Mnemonics**: `ENTER`, `ESC`, `TAB`, `F1-F24`, `LEFT_ARROW`, `PAGEUP`, etc.
 - **Ctrl shortcuts**: `^C` (Ctrl+C), `^V` (Ctrl+V), `^A` through `^Z`
@@ -135,24 +129,30 @@ The text format supports:
 ### Examples
 
 ```
-# Simple text expansion
-email { "user@example.com" }
+# Public macro - works when locked (no sensitive data)
+[public] email { "user@example.com" }
 
-# Multi-line with special keys
-signature {
+# Private macro - requires unlock (contains password)
+[private] login { "username" TAB "MyPassword123" ENTER }
+
+# Public multi-line with special keys
+[public] signature {
     "Best regards," ENTER
     "Your Name" ENTER
     "Company"
 }
 
-# Copy-paste workflow
-F5 { ^C "Modified: " ^V ENTER }
+# Private copy-paste workflow
+[private] F5 { ^C "Modified: " ^V ENTER }
 
-# Raw HID report (Ctrl+Alt+Del simulation)
-F12 { [05:4c] }  # Ctrl+Alt+Delete
+# Public raw HID report (Ctrl+Alt+Del simulation)
+[public] F12 { [05:4c] }  # Ctrl+Alt+Delete
 
-# Hex trigger
-0x3a { "F1 key pressed" }
+# Private hex trigger
+[private] 0x3a { "F1 key pressed with secret data" }
+
+# If no privacy marker specified, defaults to [private]
+F2 { "This is private by default" }
 ```
 
 ## Security
@@ -176,7 +176,9 @@ HTTP endpoints are protected by physical unlock:
 1. **Local network only**: HTTP is unencrypted, use on trusted LAN
 2. **Physical presence**: Web unlock requires physical keyboard access
 3. **Short timeout**: 5-minute window limits exposure
-4. **Passphrase protection**: Flash data remains encrypted
+4. **Passphrase protection**: Private macros remain encrypted with AES-128-GCM
+5. **Use `[public]` wisely**: Only mark macros as public if they contain no sensitive data
+6. **Default to private**: When in doubt, leave the `[private]` marker or omit it (defaults to private)
 
 ## Troubleshooting
 
@@ -290,7 +292,8 @@ curl http://hidproxy.local/macros.txt > my_config.txt
 
 # 3. Edit locally
 cat >> my_config.txt << 'EOF'
-F10 { "New macro added via HTTP!" ENTER }
+[private] F10 { "New macro added via HTTP!" ENTER }
+[public] F11 { "Public macro - works when locked" }
 EOF
 
 # 4. Upload changes

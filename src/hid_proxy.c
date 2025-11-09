@@ -46,6 +46,8 @@
 #endif
 #include "encryption.h"
 #include "usb_host.h"
+#include "kvstore_init.h"
+#include "keydef_store.h"
 
 #ifdef PICO_CYW43_SUPPORTED
 #include "wifi_config.h"
@@ -103,6 +105,12 @@ int main(void) {
     stdio_init_all();
 
     flash_safe_execute_core_init();
+
+    // Initialize kvstore (must be done before any kvstore operations)
+    if (!kvstore_init()) {
+        LOG_ERROR("Failed to initialize kvstore!\n");
+        // Continue anyway - device will work without persistent storage
+    }
 
     queue_init(&keyboard_to_tud_queue, sizeof(hid_report_t), 12);
     queue_init(&tud_to_physical_host_queue, sizeof(send_data_t), 256);
@@ -182,14 +190,30 @@ int main(void) {
         if (kb.status == locked) {
 #ifdef ENABLE_NFC
             if (nfc_key_available()) {
-                uint8_t key[32];  // Full 32-byte AES-256 key
+                uint8_t key[32];  // Full 32-byte AES-256 key (use first 16 bytes for AES-128)
                 nfc_get_key(key);
-                printf("Setting 32-byte key from NFC\n");
-                hex_dump(key, 32);
-                enc_set_key(key, sizeof(key));
-                read_state(&kb);
-                if (kb.status == locked) {
-                    nfc_bad_key();
+                printf("Setting 16-byte key from NFC\n");
+                hex_dump(key, 16);
+                enc_set_key(key, 16);  // Use first 16 bytes for AES-128
+                kvstore_set_encryption_key(key);
+
+                // Try to verify the key by loading any keydef
+                uint8_t triggers[1];
+                if (keydef_list(triggers, 1) > 0) {
+                    keydef_t *test_def = keydef_load(triggers[0]);
+                    if (test_def != NULL) {
+                        // Key is valid
+                        free(test_def);
+                        kb.status = normal;
+                        printf("NFC authentication successful\n");
+                    } else {
+                        // Key is invalid
+                        nfc_bad_key();
+                    }
+                } else {
+                    // No keydefs stored yet - assume key is valid
+                    kb.status = normal;
+                    printf("NFC key accepted (no keydefs to verify)\n");
                 }
             }
 #endif

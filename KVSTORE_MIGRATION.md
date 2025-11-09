@@ -1,10 +1,37 @@
-# Migration Plan: pico-kvstore Integration
+# Migration to pico-kvstore - COMPLETED ✅
 
 ## Overview
 
-This document outlines the plan to migrate from custom flash storage to pico-kvstore, including support for selective encryption (allowing some key definitions to work without unlocking).
+This document describes the completed migration from custom flash storage to pico-kvstore, including support for selective encryption (allowing some key definitions to work without unlocking).
 
-## Goals
+**Status: ALL PHASES COMPLETE** (Completed: November 2025)
+
+## Completion Summary
+
+All 6 phases of the migration have been successfully completed:
+
+- ✅ **Phase 1**: pico-kvstore dependency added and initialized
+- ✅ **Phase 2**: WiFi configuration migrated to kvstore
+- ✅ **Phase 3**: Key definitions migrated to kvstore with on-demand loading
+- ✅ **Phase 4**: Public/private keydef support implemented
+- ✅ **Phase 5**: Legacy flash code cleaned up and marked obsolete
+- ✅ **Phase 6**: Build verified successful
+
+**Key Changes:**
+- Storage: Custom flash → pico-kvstore (3-layer: blockdevice/logkvs/securekvs)
+- Encryption: AES-256-CTR → AES-128-GCM with authentication
+- Loading: In-memory array → On-demand loading per keydef
+- Public keydefs: Work when device is locked
+- Private keydefs: Require unlock (default)
+- Macro format: Now includes `[public]` or `[private]` prefix
+
+**Files Modified:**
+- Added: `src/kvstore_init.c`, `src/keydef_store.c`, `include/kvstore_init.h`, `include/keydef_store.h`
+- Updated: `src/key_defs.c`, `src/wifi_config.c`, `src/http_server.c`, `src/macros.c`, `src/hid_proxy.c`
+- Obsoleted: `src/flash.c` (legacy stubs remain), `src/encryption.c` (store_encrypt/decrypt marked obsolete)
+- Build: `CMakeLists.txt`, `.gitmodules` (added pico-kvstore submodule)
+
+## Original Goals
 
 1. Replace custom flash storage with pico-kvstore for both WiFi credentials and key definitions
 2. Use pico-kvstore's built-in AES-128-GCM encryption instead of custom encryption layer
@@ -534,7 +561,6 @@ F3 [private] { "SELECT * FROM users" }
 
 ### Phase 2: Migrate WiFi Config First
 1. Refactor wifi_config.c to use kvstore
-2. WiFi password always encrypted (no change to user experience)
 3. Test WiFi connection after reboot
 4. Verify persistence across power cycles
 5. Verify .env build-time config still works

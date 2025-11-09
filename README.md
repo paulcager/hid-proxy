@@ -7,8 +7,10 @@ A USB HID keyboard proxy for Raspberry Pi Pico (or Pico W) that intercepts and p
 **Core features (Pico and Pico W):**
 - **Pass-through mode**: Keystrokes normally pass directly from physical keyboard to host
 - **Text expansion**: Define single keystrokes that expand to sequences (macros)
-- **Encrypted storage**: Key definitions stored encrypted in flash memory
-- **Passphrase unlock**: Decrypt key definitions with password
+- **Encrypted storage**: Key definitions stored in flash using pico-kvstore with AES-128-GCM encryption
+- **Public/Private keydefs**: Public macros work when locked; private macros require unlock
+- **On-demand loading**: Reduced memory usage - keydefs loaded from flash as needed
+- **Passphrase unlock**: Decrypt private key definitions with password (PBKDF2 key derivation)
 - **NFC authentication**: *Optional, disabled by default.* Store/read encryption keys from NFC tags (enable with `--nfc` build flag)
 - **Auto-lock**: Automatically locks after 120 minutes of inactivity
 
@@ -61,7 +63,7 @@ Communication between cores uses lock-free queues for HID reports and LED status
 ### Prerequisites
 
 1. **Pico SDK** installed (update path in CMakeLists.txt if not at `/home/paul/pico/pico-sdk`)
-2. **Git submodules** (TinyUSB, Pico-PIO-USB, tiny-AES-c, tinycrypt)
+2. **Git submodules** (TinyUSB, Pico-PIO-USB, pico-kvstore, tiny-AES-c, tinycrypt)
 3. **CMake** and **gcc-arm-none-eabi** toolchain
 
 ### Build Steps
@@ -155,10 +157,12 @@ To set up encryption:
 1. **Double-shift** + `INSERT` to start setting a passphrase
 2. Type your desired passphrase (letters, numbers, symbols - any keys on your keyboard)
 3. Press `ENTER` to save
-4. The passphrase is used to derive an encryption key that protects your key definitions in flash
+4. The passphrase is used to derive an encryption key (via PBKDF2) that protects your private key definitions in flash
 
 **Important:**
 - Passphrases support any keyboard characters (keycodes only, not multi-byte Unicode)
+- Private keydefs (default) require unlock to access
+- Public keydefs work even when locked (useful for non-sensitive macros)
 - If you enter the wrong passphrase when unlocking, the device stays locked with no visible feedback (check serial debug output for errors)
 - There's no password recovery - if you forget it, use double-shift + `DEL` to erase and start over
 
@@ -368,21 +372,23 @@ To change the amount of flash memory reserved for storing key definitions, you o
 ## Known Issues
 
 See **BUGS.md** for a comprehensive list of 34+ bugs including:
-- Buffer overflows (#1, #2, #7, #14, #15)
+- ~~Buffer overflows (#1, #2, #7, #14, #15)~~ - Partially fixed: Keydef size limits now enforced
 - Race conditions (#3, #12)
 - Memory safety issues (#5, #8-11)
-- Weak encryption (#31, #32, #34)
+- ~~Weak encryption (#31, #32, #34)~~ - Improved: Now using AES-128-GCM with authentication (pico-kvstore/mbedtls)
+
+**Recent Improvements (November 2025):**
+- Migrated from custom flash storage to pico-kvstore
+- Upgraded from AES-256-CTR to AES-128-GCM with authentication
+- Added public/private keydef support (public macros work when locked)
+- Implemented on-demand loading to reduce memory usage
+- See **KVSTORE_MIGRATION.md** for complete migration details
 
 ## Technical Documentation
 
 For detailed technical information, see:
 - **CLAUDE.md** - Architecture, code locations, building instructions
+- **KVSTORE_MIGRATION.md** - Details of the pico-kvstore migration (completed November 2025)
+- **WIFI_SETUP.md** - WiFi and HTTP API configuration guide (Pico W only)
 - **BUGS.md** - Comprehensive bug analysis
 
-## License
-
-[Add license information here]
-
-## Contributing
-
-This is a proof-of-concept project. Contributions welcome but please note the author has indicated the code would be rewritten before serious use.

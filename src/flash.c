@@ -1,77 +1,56 @@
 //
-// Save / restore state from flash..
+// Legacy flash functions - mostly obsolete with kvstore migration
+// Kept for compatibility during transition
 //
 
 #include <pico/flash.h>
 #include "hid_proxy.h"
 #include "encryption.h"
+#include "kvstore_init.h"
+#include "keydef_store.h"
 
-static void safe_save_state(void *store) {
-    flash_range_erase(FLASH_STORE_OFFSET, FLASH_STORE_SIZE);
-    flash_range_program(FLASH_STORE_OFFSET, store, FLASH_STORE_SIZE);
-}
-
+// OBSOLETE: save_state() is no longer needed with kvstore
+// Individual keydefs are saved via keydef_save() on-demand
+// This stub is kept for backward compatibility with http_server.c
 void save_state(kb_t *kb) {
-    // TODO - we only need to write used portion (save on erases).
-    // Note that we encrypt+decrypt the buffer in place, to save allocating temporary store.
-
-    assert_sane(kb);
-
-    absolute_time_t start = get_absolute_time();
-    store_encrypt(kb);
-    absolute_time_t end = get_absolute_time();
-    LOG_INFO("Encrypt took %lld μs (%ld millis)\n", to_us_since_boot(end) - to_us_since_boot(start), to_ms_since_boot(end) - to_ms_since_boot(start));
-
-    start = get_absolute_time();
-    int ret = flash_safe_execute(safe_save_state, kb->local_store, 20);
-    end = get_absolute_time();
-    LOG_INFO("Store took %lld μs (%ld millis)\n", to_us_since_boot(end) - to_us_since_boot(start), to_ms_since_boot(end) - to_ms_since_boot(start));
-
-    if (ret != PICO_OK) {
-        panic("flash_safe_execute returned %d", ret);
-    }
-
-    if (memcmp(kb->local_store, FLASH_STORE_ADDRESS, FLASH_STORE_SIZE) != 0) {
-        panic("Didn't write what we thought we wrote");
-    }
-
-    // Now restore to unencrypted contents.
-    store_decrypt(kb);
-
+    // With kvstore, keydefs are saved individually via keydef_save()
+    // This function is now a no-op
+    LOG_INFO("save_state() is obsolete with kvstore migration\n");
     assert_sane(kb);
 }
 
+// OBSOLETE: read_state() is no longer needed with kvstore
+// Keydefs are loaded on-demand via keydef_load()
 void read_state(kb_t *kb) {
-    // Check if flash is blank (magic is not expected value)
-    bool has_magic = memcmp(FLASH_STORE_ADDRESS, FLASH_STORE_MAGIC, 8) == 0;
-
-    if (!has_magic) {
-        LOG_INFO("Flash appears blank/corrupt - initializing\n");
-        init_state(kb);
-    } else {
-        memcpy(kb->local_store, FLASH_STORE_ADDRESS, FLASH_STORE_SIZE);
-        if (!store_decrypt(kb)){
-            LOG_ERROR("Could not decrypt\n");
-            kb->status = locked;
-        } else {
-            kb->status = normal;
-            LOG_INFO("Unlocked\n");
-        }
-    }
-
+    // With kvstore, keydefs are loaded on-demand
+    // This function is now a no-op
+    LOG_INFO("read_state() is obsolete with kvstore migration\n");
     assert_sane(kb);
 }
 
+// Initialize device to blank/empty state
+// Clears all keydefs and encryption key
 void init_state(kb_t *kb) {
-    // "Format" with an empty key.
+    LOG_INFO("Initializing to blank state\n");
+
+    // Clear encryption key
+    enc_clear_key();
+    kvstore_clear_encryption_key();
+
+    // Delete all keydefs from kvstore
+    uint8_t triggers[64];
+    int count = keydef_list(triggers, 64);
+    for (int i = 0; i < count; i++) {
+        keydef_delete(triggers[i]);
+    }
+
+    // Clear local store buffer
     memset(kb->local_store, 0, FLASH_STORE_SIZE);
     memcpy(kb->local_store->magic, FLASH_STORE_MAGIC, sizeof(kb->local_store->magic));
-    enc_clear_key();
-
-    save_state(kb);
 
     kb->status = blank;
 
+    LOG_INFO("Device initialized to blank state\n");
     assert_sane(kb);
 }
 
