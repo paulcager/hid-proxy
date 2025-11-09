@@ -561,9 +561,9 @@ F3 [private] { "SELECT * FROM users" }
 
 ### Phase 2: Migrate WiFi Config First
 1. Refactor wifi_config.c to use kvstore
-3. Test WiFi connection after reboot
-4. Verify persistence across power cycles
-5. Verify .env build-time config still works
+2. Test WiFi connection after reboot
+3. Verify persistence across power cycles
+4. Verify .env build-time config still works
 
 ### Phase 3: Migrate Key Definitions
 1. Implement new keydef storage API (HID code-based keys)

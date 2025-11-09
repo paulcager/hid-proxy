@@ -192,7 +192,7 @@ The text format for macros (used for HTTP/network configuration):
 - Web access timeout: 5 minutes (wifi_config.c:web_access_enable)
 - NFC key storage address: Block `0x3A` on Mifare tag (nfc_tag.c:18)
 - I2C pins: SDA=4, SCL=5; PIO-USB pins: DP=2 (nfc_tag.c:12-13, usb_host.c:38)
-- mDNS hostname: `hidproxy.local` (wifi_config.c:106)
+- mDNS hostname: `hidproxy-XXXX.local` where XXXX = last 4 hex digits of board ID (wifi_config.c)
 - Keydef key format: `keydef.0xHH` where HH is HID code (keydef_store.c)
 - WiFi key format: `wifi.ssid`, `wifi.password`, `wifi.country` (wifi_config.c)
 
@@ -217,20 +217,22 @@ The device now supports WiFi-based configuration via HTTP API. See WIFI_SETUP.md
 - Non-blocking WiFi connection (keyboard stays responsive)
 - HTTP endpoints: GET/POST /macros.txt, GET /status
 - Physical unlock required (both-shifts+SPACE) for 5-minute web access
-- mDNS responder at `hidproxy.local`
+- mDNS responder at `hidproxy-XXXX.local` (XXXX = last 4 hex digits of board ID)
 - Text format upload/download for bulk editing
 - No USB re-enumeration needed
 
 **Usage:**
 ```bash
 # 1. Press both-shifts+SPACE on keyboard to enable web access
-# 2. Download macros
-curl http://hidproxy.local/macros.txt > macros.txt
+# 2. Download macros (replace XXXX with your board ID)
+curl http://hidproxy-XXXX.local/macros.txt > macros.txt
 # 3. Edit and upload
-curl -X POST http://hidproxy.local/macros.txt --data-binary @macros.txt
+curl -X POST http://hidproxy-XXXX.local/macros.txt --data-binary @macros.txt
 # 4. Check status
-curl http://hidproxy.local/status
+curl http://hidproxy-XXXX.local/status
 ```
+
+**Finding your board ID:** Check the serial console output when the device boots for the mDNS hostname, or use `avahi-browse -a` on Linux.
 
 ## Future Development
 

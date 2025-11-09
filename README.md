@@ -17,7 +17,7 @@ A USB HID keyboard proxy for Raspberry Pi Pico (or Pico W) that intercepts and p
 **Pico W exclusive features:**
 - **WiFi/HTTP configuration**: Edit macros via HTTP API without USB re-enumeration
 - **Physical web unlock**: Both-shifts+SPACE enables 5-minute web access window
-- **mDNS support**: Access device at `hidproxy.local`
+- **mDNS support**: Access device at `hidproxy-XXXX.local` (XXXX = last 4 digits of board ID)
 
 ## Hardware Requirements
 
@@ -173,9 +173,11 @@ If you have a Pico W, use the WiFi/HTTP interface for easier macro editing. See 
 **Quick start:**
 1. Configure WiFi (see WIFI_SETUP.md for initial setup)
 2. Press **both shift keys + SPACE** on your keyboard to enable web access (5 minutes)
-3. Download macros: `curl http://hidproxy.local/macros.txt > macros.txt`
+3. Download macros: `curl http://hidproxy-XXXX.local/macros.txt > macros.txt` (replace XXXX with your board ID)
 4. Edit the file in your favorite text editor
-5. Upload changes: `curl -X POST http://hidproxy.local/macros.txt --data-binary @macros.txt`
+5. Upload changes: `curl -X POST http://hidproxy-XXXX.local/macros.txt --data-binary @macros.txt`
+
+**Note:** The mDNS hostname includes the last 4 digits of your board's unique ID (e.g., `hidproxy-a1b2.local`). Check your serial console output for the exact hostname.
 
 **Advantages:**
 - No USB re-enumeration (keyboard stays functional)

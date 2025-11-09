@@ -55,9 +55,12 @@ Press **both shifts + SPACE** on the physical keyboard. This enables web access 
 
 ### 2. Check Status
 
+**Note:** The mDNS hostname includes the last 4 digits of your board's unique ID. Check your serial console output for the exact hostname (e.g., `hidproxy-a1b2.local`).
+
 ```bash
-curl http://hidproxy.local/status
+curl http://hidproxy-XXXX.local/status
 ```
+(Replace `XXXX` with your board ID)
 
 Response:
 ```json
@@ -74,7 +77,7 @@ Response:
 ### 3. Get Current Macros
 
 ```bash
-curl http://hidproxy.local/macros.txt
+curl http://hidproxy-XXXX.local/macros.txt
 ```
 
 Response (updated format as of November 2025):
@@ -95,13 +98,13 @@ Edit your macros in a local file, then upload:
 
 ```bash
 # Download current macros
-curl http://hidproxy.local/macros.txt > my_macros.txt
+curl http://hidproxy-XXXX.local/macros.txt > my_macros.txt
 
 # Edit the file
 vi my_macros.txt
 
 # Upload changes
-curl -X POST http://hidproxy.local/macros.txt --data-binary @my_macros.txt
+curl -X POST http://hidproxy-XXXX.local/macros.txt --data-binary @my_macros.txt
 ```
 
 The device will:
@@ -193,15 +196,17 @@ Look for:
 ```
 WiFi initialized, connecting to 'YourSSID'...
 WiFi connected! IP: 192.168.1.100
-mDNS responder started: hidproxy.local
+mDNS responder started: hidproxy-a1b2.local
 HTTP server started
 ```
+
+**Note the hostname** shown in the mDNS responder line - this is what you'll use to access the device.
 
 ### Web Access Denied (403)
 
 You forgot to enable web access:
 1. Press both shifts + SPACE on the keyboard
-2. Check status: `curl http://hidproxy.local/status`
+2. Check status: `curl http://hidproxy-XXXX.local/status` (use your board ID)
 3. Verify `"web_enabled": true`
 
 ### Device Locked (423)
@@ -213,10 +218,11 @@ The device is locked:
 
 ### mDNS Not Resolving
 
-If `hidproxy.local` doesn't resolve:
+If `hidproxy-XXXX.local` doesn't resolve:
 1. Check your router supports mDNS/Bonjour
 2. Use IP address directly (check UART output for IP)
 3. On Linux, install `avahi-daemon`
+4. Make sure you're using the correct hostname - check serial console for the exact mDNS name with your board ID
 
 ### Macro Parse Errors
 
@@ -287,8 +293,8 @@ Updates macros from text format.
 ```bash
 # 1. Enable web access (press both-shifts+SPACE on keyboard)
 
-# 2. Download current config
-curl http://hidproxy.local/macros.txt > my_config.txt
+# 2. Download current config (replace XXXX with your board ID)
+curl http://hidproxy-XXXX.local/macros.txt > my_config.txt
 
 # 3. Edit locally
 cat >> my_config.txt << 'EOF'
@@ -297,13 +303,15 @@ cat >> my_config.txt << 'EOF'
 EOF
 
 # 4. Upload changes
-curl -X POST http://hidproxy.local/macros.txt --data-binary @my_config.txt
+curl -X POST http://hidproxy-XXXX.local/macros.txt --data-binary @my_config.txt
 
 # 5. Verify
-curl http://hidproxy.local/status
+curl http://hidproxy-XXXX.local/status
 
 # 6. Test: Press F10 on your keyboard
 ```
+
+**Tip:** Find your board ID by checking the serial console output when the device boots, or use `avahi-browse -a` on Linux to list all mDNS services.
 
 ## Tips
 
