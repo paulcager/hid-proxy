@@ -48,12 +48,16 @@ RUN mkdir -p pioasm-build && \
 
 # Pre-build picotool completely
 # This tool is used for loading binaries to Pico devices
+# Install it properly so subsequent builds don't try to reinstall
 RUN git clone --depth 1 https://github.com/raspberrypi/picotool.git picotool-src && \
     mkdir -p picotool-build && \
     cd picotool-build && \
     cmake -DPICO_SDK_PATH=/opt/pico-sdk ../picotool-src && \
     make -j$(nproc) && \
-    cp picotool /usr/local/bin/
+    make install && \
+    # Clean up the build directory to prevent reinstall attempts
+    cd /opt/pico-tools && \
+    rm -rf picotool-build picotool-src
 
 # Pre-build pico-kvstore host tool (kvstore-util)
 # This tool is used for creating and manipulating KVS image files on the host
