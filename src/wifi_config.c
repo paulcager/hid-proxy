@@ -73,9 +73,6 @@ void wifi_config_load(wifi_config_t *config) {
     memset(config, 0, sizeof(wifi_config_t));
     config->enable_wifi = false;
 
-    // All WiFi config is PUBLIC - use default key
-    kvstore_use_default_key();
-
     // Load WiFi enabled flag
     uint8_t enabled_byte = 0;
     ret = kvs_get(WIFI_ENABLED_KEY, &enabled_byte, sizeof(enabled_byte), &size);
@@ -122,9 +119,6 @@ void wifi_config_load(wifi_config_t *config) {
 
 void wifi_config_save(const wifi_config_t *config) {
     int ret;
-
-    // All WiFi config is PUBLIC - use default key
-    kvstore_use_default_key();
 
     // Save SSID
     ret = kvs_set(WIFI_SSID_KEY, config->ssid, strlen(config->ssid) + 1);

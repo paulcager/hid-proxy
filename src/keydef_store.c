@@ -2,6 +2,7 @@
  * keydef_store.c
  *
  * Key definition storage using kvstore
+ * Simplified version: Direct kvs_get/kvs_set calls, no encryption
  */
 
 #include "keydef_store.h"
@@ -46,34 +47,11 @@ bool keydef_save(const keydef_t *keydef) {
 
     size_t size = keydef_size(keydef);
 
-    // Switch to appropriate encryption key based on privacy requirement
-    if (keydef->require_unlock) {
-        // Private keydef - use secure key (PBKDF2-derived from password)
-        kvstore_use_secure_key();
-        printf("keydef_save: Saving PRIVATE keydef '%s' (0x%02X, %u reports, %zu bytes) with SECURE key, device %s\n",
-                  key, keydef->trigger, keydef->count, size,
-                  kvstore_is_unlocked() ? "UNLOCKED" : "LOCKED");
-    } else {
-        // Public keydef - use default key (hardcoded, always available)
-        kvstore_use_default_key();
-        printf("keydef_save: Saving PUBLIC keydef '%s' (0x%02X, %u reports, %zu bytes) with DEFAULT key\n",
-                  key, keydef->trigger, keydef->count, size);
-    }
+    printf("keydef_save: Saving keydef '%s' (0x%02X, %u reports, %zu bytes)\n",
+              key, keydef->trigger, keydef->count, size);
 
-    // All keydefs are encrypted, but with different keys
-    printf("keydef_save: About to call kvs_set('%s', %p, %zu)...\n", key, keydef, size);
-    printf("keydef_save: keydef contents: trigger=0x%02X, count=%u, require_unlock=%d\n",
-           keydef->trigger, keydef->count, keydef->require_unlock);
-
-    // Hex dump first 32 bytes of what we're writing
-    printf("keydef_save: Data hex dump (first %zu bytes): ", size < 32 ? size : 32);
-    for (size_t i = 0; i < (size < 32 ? size : 32); i++) {
-        printf("%02X ", ((uint8_t*)keydef)[i]);
-    }
-    printf("\n");
-
+    // Direct kvs_set call (no encryption)
     int ret = kvs_set(key, keydef, size);
-    printf("keydef_save: kvs_set returned: %d (%s)\n", ret, ret == 0 ? "SUCCESS" : kvs_strerror(ret));
 
     if (ret != 0) {
         printf("keydef_save: FAILED to save keydef '%s': %s\n",
@@ -82,51 +60,6 @@ bool keydef_save(const keydef_t *keydef) {
     }
 
     printf("keydef_save: Successfully saved keydef '%s'\n", key);
-
-    // IMMEDIATE TEST: First try writing a simple string to verify kvstore works
-    printf("keydef_save: KVSTORE BASIC TEST - writing simple string...\n");
-    const char *test_val = "test123";
-    ret = kvs_set("test.key", test_val, strlen(test_val) + 1);
-    printf("keydef_save: KVSTORE BASIC TEST write: %s\n", ret == 0 ? "SUCCESS" : kvs_strerror(ret));
-
-    if (ret == 0) {
-        char read_buf[32];
-        size_t read_size;
-        ret = kvs_get("test.key", read_buf, sizeof(read_buf), &read_size);
-        printf("keydef_save: KVSTORE BASIC TEST read: %s", ret == 0 ? "SUCCESS" : kvs_strerror(ret));
-        if (ret == 0) {
-            printf(" (value='%s')", read_buf);
-        }
-        printf("\n");
-    }
-
-    // Now try to read back the actual keydef
-    printf("keydef_save: IMMEDIATE VERIFICATION - trying to read back keydef...\n");
-    size_t verify_size;
-    ret = kvs_get_any(key, NULL, 0, &verify_size);
-    printf("keydef_save: IMMEDIATE VERIFICATION: %s", ret == 0 ? "SUCCESS" : kvs_strerror(ret));
-    if (ret == 0) {
-        printf(" (size=%zu, expected=%zu)", verify_size, size);
-    }
-    printf("\n");
-
-    // If successful, try reading the actual data
-    if (ret == 0 && verify_size == size) {
-        uint8_t *verify_buf = malloc(verify_size);
-        if (verify_buf) {
-            ret = kvs_get_any(key, verify_buf, verify_size, &verify_size);
-            printf("keydef_save: IMMEDIATE READ DATA: %s\n", ret == 0 ? "SUCCESS" : kvs_strerror(ret));
-            if (ret == 0) {
-                printf("keydef_save: Read back hex (first %zu bytes): ", verify_size < 32 ? verify_size : 32);
-                for (size_t i = 0; i < (verify_size < 32 ? verify_size : 32); i++) {
-                    printf("%02X ", verify_buf[i]);
-                }
-                printf("\n");
-            }
-            free(verify_buf);
-        }
-    }
-
     return true;
 }
 
@@ -134,44 +67,70 @@ keydef_t *keydef_load(uint8_t trigger) {
     char key[16];
     keydef_make_key(trigger, key);
 
-    printf("keydef_load: Attempting to load keydef '%s' (0x%02X), device %s\n",
-           key, trigger, kvstore_is_unlocked() ? "UNLOCKED" : "LOCKED");
+    printf("keydef_load: Attempting to load keydef '%s' (0x%02X)\n", key, trigger);
 
-    // First, get the size - try with both keys (kvs_get_any handles fallback)
-    size_t size;
-    int ret = kvs_get_any(key, NULL, 0, &size);
+    // Allocate a reasonable buffer to read into
+    // (Max keydef: 6 bytes header + 64 reports * 8 bytes = 518 bytes)
+    size_t max_size = sizeof(keydef_t) + 64 * sizeof(hid_keyboard_report_t);
+    uint8_t *temp_buffer = (uint8_t *)malloc(max_size);
+    if (temp_buffer == NULL) {
+        printf("keydef_load: Failed to allocate temp buffer\n");
+        return NULL;
+    }
+
+    // Read the keydef
+    size_t actual_size;
+    int ret = kvs_get(key, temp_buffer, max_size, &actual_size);
+
     if (ret != 0) {
-        if (ret == KVSTORE_ERROR_AUTHENTICATION_FAILED) {
-            printf("keydef_load: Keydef '%s' requires secure key, device locked\n", key);
-        } else if (ret == KVSTORE_ERROR_ITEM_NOT_FOUND) {
+        if (ret == KVSTORE_ERROR_ITEM_NOT_FOUND) {
             printf("keydef_load: Keydef '%s' NOT FOUND in kvstore\n", key);
         } else {
-            printf("keydef_load: Failed to get size for keydef '%s': %s\n",
+            printf("keydef_load: Failed to read keydef '%s': %s\n",
                       key, kvs_strerror(ret));
         }
+        free(temp_buffer);
         return NULL;
     }
 
-    printf("keydef_load: Found keydef '%s', size=%zu bytes\n", key, size);
+    printf("keydef_load: Successfully read keydef '%s', size=%zu bytes\n", key, actual_size);
 
-    // Allocate and load
-    keydef_t *keydef = (keydef_t *)malloc(size);
+    // Sanity check the size
+    if (actual_size < sizeof(keydef_t)) {
+        printf("keydef_load: Invalid size %zu (too small, minimum is %zu)\n",
+               actual_size, sizeof(keydef_t));
+        free(temp_buffer);
+        return NULL;
+    }
+
+    // Allocate the right-sized keydef and copy data
+    keydef_t *keydef = (keydef_t *)malloc(actual_size);
     if (keydef == NULL) {
-        printf("keydef_load: malloc failed for %zu bytes\n", size);
+        printf("keydef_load: malloc failed for %zu bytes\n", actual_size);
+        free(temp_buffer);
         return NULL;
     }
 
-    ret = kvs_get_any(key, keydef, size, &size);
-    if (ret != 0) {
-        printf("keydef_load: Failed to load keydef '%s': %s\n",
-                  key, kvs_strerror(ret));
+    memcpy(keydef, temp_buffer, actual_size);
+    free(temp_buffer);
+
+    printf("keydef_load: Loaded keydef data (trigger=0x%02X, count=%u)\n",
+              keydef->trigger, keydef->count);
+
+    // Verify the loaded data makes sense
+    if (keydef->trigger != trigger) {
+        printf("keydef_load: ERROR - trigger mismatch! Expected 0x%02X, got 0x%02X\n",
+               trigger, keydef->trigger);
         free(keydef);
         return NULL;
     }
 
-    printf("keydef_load: Successfully loaded keydef '%s' (trigger=0x%02X, %u reports, %s)\n",
-              key, keydef->trigger, keydef->count,
-              keydef->require_unlock ? "PRIVATE" : "PUBLIC");
+    if (keydef->count > 1024) {
+        printf("keydef_load: ERROR - invalid count %u (too large)\n", keydef->count);
+        free(keydef);
+        return NULL;
+    }
+
     return keydef;
 }
 

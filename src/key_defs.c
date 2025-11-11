@@ -369,12 +369,10 @@ void print_keydefs() {
 
         // Try to get size without loading full value
         size_t size;
-        int get_ret = kvs_get_any(key, NULL, 0, &size);
+        int get_ret = kvs_get(key, NULL, 0, &size);
 
         if (get_ret == 0) {
             printf("  %s (size=%zu bytes)\n", key, size);
-        } else if (get_ret == KVSTORE_ERROR_AUTHENTICATION_FAILED) {
-            printf("  %s (encrypted, locked)\n", key);
         } else {
             printf("  %s (error: %s)\n", key, kvs_strerror(get_ret));
         }
