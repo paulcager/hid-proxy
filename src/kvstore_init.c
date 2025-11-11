@@ -12,23 +12,34 @@
 #include <string.h>
 #include <stdio.h>
 
-// Encryption key storage
-static uint8_t encryption_key[16];
-static bool key_available = false;
+// Dual-key encryption system:
+// - default_key: hardcoded, always available, for public data (WiFi config, public keydefs)
+// - secure_key: PBKDF2-derived from user password, for private keydefs
+static const uint8_t default_key[16] = {
+    0xDE, 0xFA, 0x17, 0x00,  0x00, 0x11, 0x22, 0x33,
+    0x44, 0x55, 0x66, 0x77,  0x88, 0x99, 0xAA, 0xBB
+};
+static uint8_t secure_key[16];
+static bool secure_key_available = false;
+static bool use_secure_key = false;  // Controls which key secretkey_loader returns
 
 /*! \brief Secret key loader callback for secure KVS
  *
  * This function is called by the secure KVS layer when it needs
  * the encryption key to encrypt/decrypt data.
  *
+ * Returns secure_key if available and use_secure_key is true,
+ * otherwise returns default_key.
+ *
  * \param key Buffer to receive the 16-byte AES key
- * \return 0 on success, -1 if no key is available
+ * \return 0 on success (always succeeds - always have at least default key)
  */
 static int secretkey_loader(uint8_t *key) {
-    if (!key_available) {
-        return -1;  // No key available (device locked)
+    if (use_secure_key && secure_key_available) {
+        memcpy(key, secure_key, 16);
+    } else {
+        memcpy(key, default_key, 16);
     }
-    memcpy(key, encryption_key, 16);
     return 0;
 }
 
@@ -83,18 +94,54 @@ bool kvstore_init(void) {
 }
 
 void kvstore_set_encryption_key(const uint8_t key[16]) {
-    memcpy(encryption_key, key, 16);
-    key_available = true;
-    printf("kvstore_init: Encryption key loaded (device unlocked)\n");
+    memcpy(secure_key, key, 16);
+    secure_key_available = true;
+    use_secure_key = true;  // Switch to secure key mode
+    printf("kvstore_init: Secure encryption key loaded (device unlocked)\n");
 }
 
 void kvstore_clear_encryption_key(void) {
     // Clear key from memory for security
-    memset(encryption_key, 0, sizeof(encryption_key));
-    key_available = false;
-    printf("kvstore_init: Encryption key cleared (device locked)\n");
+    memset(secure_key, 0, sizeof(secure_key));
+    secure_key_available = false;
+    use_secure_key = false;  // Switch back to default key mode
+    printf("kvstore_init: Secure encryption key cleared (device locked, using default key)\n");
 }
 
 bool kvstore_is_unlocked(void) {
-    return key_available;
+    return secure_key_available;
+}
+
+void kvstore_use_default_key(void) {
+    use_secure_key = false;
+}
+
+void kvstore_use_secure_key(void) {
+    if (secure_key_available) {
+        use_secure_key = true;
+    }
+    // Note: If secure key not available, stays on default key
+}
+
+int kvs_get_any(const char *key, void *buffer, size_t bufsize, size_t *actual_size) {
+    // Try with current key context first
+    int ret = kvs_get(key, buffer, bufsize, actual_size);
+
+    if (ret == KVSTORE_ERROR_AUTHENTICATION_FAILED) {
+        // Authentication failed - try with opposite key
+        bool was_secure = use_secure_key;
+        use_secure_key = !was_secure;
+
+        ret = kvs_get(key, buffer, bufsize, actual_size);
+
+        // Restore original key context
+        use_secure_key = was_secure;
+
+        if (ret == 0) {
+            printf("kvs_get_any: Successfully read '%s' with %s key after initial auth failure\n",
+                   key, use_secure_key ? "default" : "secure");
+        }
+    }
+
+    return ret;
 }

@@ -48,9 +48,15 @@ Communication between cores uses three queues:
 **Storage** (kvstore_init.c, keydef_store.c): Uses pico-kvstore for persistent storage with three layers:
 - blockdevice_flash: Raw flash access with wear leveling
 - kvstore_logkvs: Log-structured key-value store
-- kvstore_securekvs: AES-128-GCM encryption layer
+- kvstore_securekvs: AES-128-GCM encryption layer with dual-key system
 
 Key definitions are stored as individual key-value pairs (`keydef.0xHH`) and loaded on-demand, reducing memory usage. Public keydefs work when device is locked; private keydefs require unlock.
+
+**Dual-Key Encryption System** (kvstore_init.c): All data is encrypted, but using two different keys:
+- **default_key**: Hardcoded constant (0xDEFA1700...), always available. Used for public keydefs and WiFi credentials.
+- **secure_key**: PBKDF2-derived from user password, only available when unlocked. Used for private keydefs (passwords, sensitive macros).
+
+The `secretkey_loader()` callback switches between keys based on context. The `kvs_get_any()` helper function provides transparent fallback: tries the current key first, then retries with the opposite key on authentication failure. This allows seamless access to both public and private data when unlocked, while restricting access to only public data when locked.
 
 **Encryption** (encryption.c/h): Uses PBKDF2 (SHA256-based) for key derivation from passphrase. Actual encryption/decryption is handled by kvstore's mbedtls integration (AES-128-GCM with authentication). Legacy `store_encrypt()`/`store_decrypt()` functions marked obsolete.
 
@@ -60,7 +66,7 @@ Key definitions are stored as individual key-value pairs (`keydef.0xHH`) and loa
 
 **USB Configuration** (tusb_config.h): Configures device stack with keyboard, mouse, and CDC interfaces. Host stack (via PIO-USB on GPIO2/3) configured for keyboard/mouse input.
 
-**WiFi Configuration** (wifi_config.c/h): Manages WiFi connection using CYW43 chip on Pico W. Stores WiFi credentials in kvstore (`wifi.ssid`, `wifi.password` [encrypted], `wifi.country`). Provides non-blocking WiFi connection that runs in background without affecting keyboard functionality.
+**WiFi Configuration** (wifi_config.c/h): Manages WiFi connection using CYW43 chip on Pico W. Stores WiFi credentials in kvstore (`wifi.ssid`, `wifi.password`, `wifi.country`) using the default (public) encryption key. WiFi credentials are not considered sensitive in this application context. Provides non-blocking WiFi connection that runs in background without affecting keyboard functionality.
 
 **HTTP Server** (http_server.c/h): Implements lwIP-based HTTP server for macro configuration. Provides REST-like endpoints for GET/POST of macros in text format. Integrates with physical unlock system (both-shifts+SPACE) for security.
 
@@ -168,6 +174,8 @@ The text format for macros (used for HTTP/network configuration):
 - Interactive key definition: `start_define()` in key_defs.c (saves to kvstore when complete)
 - Physical unlock trigger: key_defs.c (both-shifts+HOME handler)
 - KVStore initialization: `kvstore_init()` in kvstore_init.c
+- Dual-key system: `secretkey_loader()`, `kvstore_use_default_key()`, `kvstore_use_secure_key()` in kvstore_init.c
+- Transparent key fallback: `kvs_get_any()` in kvstore_init.c (tries current key, then opposite on auth failure)
 - Keydef storage API: `keydef_save()`, `keydef_load()`, `keydef_delete()`, `keydef_list()` in keydef_store.c
 - Macro parser: `parse_macros()` in macros.c (supports `[public]`/`[private]` syntax)
 - Macro serializer: `serialize_macros()` in macros.c (outputs privacy markers)
@@ -195,6 +203,7 @@ The text format for macros (used for HTTP/network configuration):
 - mDNS hostname: `hidproxy-XXXX.local` where XXXX = last 4 hex digits of board ID (wifi_config.c)
 - Keydef key format: `keydef.0xHH` where HH is HID code (keydef_store.c)
 - WiFi key format: `wifi.ssid`, `wifi.password`, `wifi.country` (wifi_config.c)
+- Default encryption key: Hardcoded in kvstore_init.c (0xDEFA1700...), used for public data
 
 ## Known Issues/TODOs
 

@@ -9,6 +9,9 @@
 #include "lwip/apps/mdns.h"
 #include <string.h>
 
+// Note: All WiFi config (including password) is treated as PUBLIC data.
+// WiFi credentials are not considered sensitive in this application context.
+
 // WiFi configuration keys
 #define WIFI_SSID_KEY "wifi.ssid"
 #define WIFI_PASSWORD_KEY "wifi.password"
@@ -70,7 +73,10 @@ void wifi_config_load(wifi_config_t *config) {
     memset(config, 0, sizeof(wifi_config_t));
     config->enable_wifi = false;
 
-    // Load WiFi enabled flag (public)
+    // All WiFi config is PUBLIC - use default key
+    kvstore_use_default_key();
+
+    // Load WiFi enabled flag
     uint8_t enabled_byte = 0;
     ret = kvs_get(WIFI_ENABLED_KEY, &enabled_byte, sizeof(enabled_byte), &size);
     if (ret == 0 && size == sizeof(enabled_byte)) {
@@ -80,7 +86,7 @@ void wifi_config_load(wifi_config_t *config) {
         config->enable_wifi = true;
     }
 
-    // Load SSID (public)
+    // Load SSID
     ret = kvs_get(WIFI_SSID_KEY, config->ssid, sizeof(config->ssid), &size);
     if (ret != 0) {
         LOG_DEBUG("wifi_config_load: SSID not found in kvstore\n");
@@ -90,21 +96,17 @@ void wifi_config_load(wifi_config_t *config) {
         config->ssid[sizeof(config->ssid) - 1] = '\0';
     }
 
-    // Load password (encrypted - requires device unlock)
+    // Load password (also public - WiFi creds not considered sensitive here)
     ret = kvs_get(WIFI_PASSWORD_KEY, config->password, sizeof(config->password), &size);
     if (ret != 0) {
-        if (ret == KVSTORE_ERROR_AUTHENTICATION_FAILED) {
-            LOG_DEBUG("wifi_config_load: Password encrypted, device locked\n");
-        } else {
-            LOG_DEBUG("wifi_config_load: Password not found in kvstore\n");
-        }
+        LOG_DEBUG("wifi_config_load: Password not found in kvstore\n");
         config->password[0] = '\0';
     } else {
         // Ensure null-terminated
         config->password[sizeof(config->password) - 1] = '\0';
     }
 
-    // Load country code (public)
+    // Load country code
     ret = kvs_get(WIFI_COUNTRY_KEY, config->country, sizeof(config->country), &size);
     if (ret != 0) {
         // Default to US
@@ -121,29 +123,31 @@ void wifi_config_load(wifi_config_t *config) {
 void wifi_config_save(const wifi_config_t *config) {
     int ret;
 
-    // Save SSID (public)
+    // All WiFi config is PUBLIC - use default key
+    kvstore_use_default_key();
+
+    // Save SSID
     ret = kvs_set(WIFI_SSID_KEY, config->ssid, strlen(config->ssid) + 1);
     if (ret != 0) {
         LOG_ERROR("wifi_config_save: Failed to save SSID: %s\n", kvs_strerror(ret));
         return;
     }
 
-    // Save password (encrypted)
-    ret = kvs_set_flag(WIFI_PASSWORD_KEY, config->password, strlen(config->password) + 1,
-                       KVSTORE_REQUIRE_CONFIDENTIALITY_FLAG);
+    // Save password (also public in this application)
+    ret = kvs_set(WIFI_PASSWORD_KEY, config->password, strlen(config->password) + 1);
     if (ret != 0) {
         LOG_ERROR("wifi_config_save: Failed to save password: %s\n", kvs_strerror(ret));
         return;
     }
 
-    // Save country code (public)
+    // Save country code
     ret = kvs_set(WIFI_COUNTRY_KEY, config->country, strlen(config->country) + 1);
     if (ret != 0) {
         LOG_ERROR("wifi_config_save: Failed to save country: %s\n", kvs_strerror(ret));
         return;
     }
 
-    // Save enabled flag (public)
+    // Save enabled flag
     uint8_t enabled_byte = config->enable_wifi ? 1 : 0;
     ret = kvs_set(WIFI_ENABLED_KEY, &enabled_byte, sizeof(enabled_byte));
     if (ret != 0) {

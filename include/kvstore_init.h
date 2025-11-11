@@ -11,6 +11,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 
 // Use 128KB for kvstore at end of 2MB flash (substantial increase from current 8KB total)
 #define KVSTORE_SIZE (128 * 1024)
@@ -50,3 +51,31 @@ void kvstore_clear_encryption_key(void);
  * \return true if encryption key is loaded (device unlocked), false otherwise
  */
 bool kvstore_is_unlocked(void);
+
+/*! \brief Switch to default (public) encryption key
+ *
+ * Use this before writing/reading public data (WiFi config, public keydefs).
+ * The default key is always available.
+ */
+void kvstore_use_default_key(void);
+
+/*! \brief Switch to secure (private) encryption key
+ *
+ * Use this before writing/reading private data (private keydefs).
+ * Only works if device is unlocked; otherwise stays on default key.
+ */
+void kvstore_use_secure_key(void);
+
+/*! \brief Read a value, trying both public and private keys
+ *
+ * Attempts to read with current key context. If authentication fails,
+ * retries with the opposite key. This allows transparent access to both
+ * public and private data when unlocked.
+ *
+ * \param key KVStore key name
+ * \param buffer Buffer to receive value
+ * \param bufsize Size of buffer
+ * \param actual_size Receives actual size of value
+ * \return 0 on success, error code on failure
+ */
+int kvs_get_any(const char *key, void *buffer, size_t bufsize, size_t *actual_size);

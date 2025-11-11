@@ -6,6 +6,7 @@
 
 #include "keydef_store.h"
 #include "kvstore.h"
+#include "kvstore_init.h"
 #include "logging.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -45,19 +46,21 @@ bool keydef_save(const keydef_t *keydef) {
 
     size_t size = keydef_size(keydef);
 
-    // Phase 4: Check require_unlock flag to decide whether to encrypt
-    int ret;
+    // Switch to appropriate encryption key based on privacy requirement
     if (keydef->require_unlock) {
-        // Private keydef - requires encryption
-        ret = kvs_set_flag(key, keydef, size, KVSTORE_REQUIRE_CONFIDENTIALITY_FLAG);
-        LOG_DEBUG("keydef_save: Saved PRIVATE keydef 0x%02X (%u reports)\n",
+        // Private keydef - use secure key (PBKDF2-derived from password)
+        kvstore_use_secure_key();
+        LOG_DEBUG("keydef_save: Saving PRIVATE keydef 0x%02X (%u reports) with secure key\n",
                   keydef->trigger, keydef->count);
     } else {
-        // Public keydef - no encryption needed
-        ret = kvs_set_flag(key, keydef, size, 0);
-        LOG_DEBUG("keydef_save: Saved PUBLIC keydef 0x%02X (%u reports)\n",
+        // Public keydef - use default key (hardcoded, always available)
+        kvstore_use_default_key();
+        LOG_DEBUG("keydef_save: Saving PUBLIC keydef 0x%02X (%u reports) with default key\n",
                   keydef->trigger, keydef->count);
     }
+
+    // All keydefs are encrypted, but with different keys
+    int ret = kvs_set(key, keydef, size);
 
     if (ret != 0) {
         LOG_ERROR("keydef_save: Failed to save keydef 0x%02X: %s\n",
@@ -72,12 +75,12 @@ keydef_t *keydef_load(uint8_t trigger) {
     char key[16];
     keydef_make_key(trigger, key);
 
-    // First, get the size
+    // First, get the size - try with both keys (kvs_get_any handles fallback)
     size_t size;
-    int ret = kvs_get(key, NULL, 0, &size);
+    int ret = kvs_get_any(key, NULL, 0, &size);
     if (ret != 0) {
         if (ret == KVSTORE_ERROR_AUTHENTICATION_FAILED) {
-            LOG_DEBUG("keydef_load: Keydef 0x%02X is encrypted, device locked\n", trigger);
+            LOG_DEBUG("keydef_load: Keydef 0x%02X requires secure key, device locked\n", trigger);
         } else if (ret == KVSTORE_ERROR_ITEM_NOT_FOUND) {
             LOG_DEBUG("keydef_load: Keydef 0x%02X not found\n", trigger);
         } else {
@@ -94,7 +97,7 @@ keydef_t *keydef_load(uint8_t trigger) {
         return NULL;
     }
 
-    ret = kvs_get(key, keydef, size, &size);
+    ret = kvs_get_any(key, keydef, size, &size);
     if (ret != 0) {
         LOG_ERROR("keydef_load: Failed to load keydef 0x%02X: %s\n",
                   trigger, kvs_strerror(ret));
@@ -102,8 +105,9 @@ keydef_t *keydef_load(uint8_t trigger) {
         return NULL;
     }
 
-    LOG_DEBUG("keydef_load: Loaded keydef 0x%02X (%u reports)\n",
-              keydef->trigger, keydef->count);
+    LOG_DEBUG("keydef_load: Loaded keydef 0x%02X (%u reports, %s)\n",
+              keydef->trigger, keydef->count,
+              keydef->require_unlock ? "PRIVATE" : "PUBLIC");
     return keydef;
 }
 
