@@ -349,10 +349,13 @@ void print_keydefs() {
     // This avoids potential crashes from malformed keydefs
 
     printf("\n=== KVStore Contents ===\n");
+    printf("DEBUG: About to call kvs_find...\n");
 
     kvs_find_t ctx;
     char key[64];
     int ret = kvs_find("", &ctx);  // Find all keys
+
+    printf("DEBUG: kvs_find returned %d (%s)\n", ret, ret == 0 ? "SUCCESS" : kvs_strerror(ret));
 
     if (ret != 0) {
         printf("Error listing kvstore: %s\n", kvs_strerror(ret));
@@ -360,7 +363,10 @@ void print_keydefs() {
     }
 
     int count = 0;
+    printf("DEBUG: Starting kvs_find_next loop...\n");
     while (kvs_find_next(&ctx, key, sizeof(key)) == 0) {
+        printf("DEBUG: Found key '%s'\n", key);
+
         // Try to get size without loading full value
         size_t size;
         int get_ret = kvs_get_any(key, NULL, 0, &size);
@@ -373,8 +379,14 @@ void print_keydefs() {
             printf("  %s (error: %s)\n", key, kvs_strerror(get_ret));
         }
         count++;
+
+        if (count > 100) {
+            printf("DEBUG: Safety break - too many keys!\n");
+            break;
+        }
     }
 
+    printf("DEBUG: Exited loop, closing find context...\n");
     kvs_find_close(&ctx);
     printf("Total: %d keys\n", count);
     printf("========================\n\n");

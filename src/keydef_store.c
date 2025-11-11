@@ -61,7 +61,19 @@ bool keydef_save(const keydef_t *keydef) {
     }
 
     // All keydefs are encrypted, but with different keys
+    printf("keydef_save: About to call kvs_set('%s', %p, %zu)...\n", key, keydef, size);
+    printf("keydef_save: keydef contents: trigger=0x%02X, count=%u, require_unlock=%d\n",
+           keydef->trigger, keydef->count, keydef->require_unlock);
+
+    // Hex dump first 32 bytes of what we're writing
+    printf("keydef_save: Data hex dump (first %zu bytes): ", size < 32 ? size : 32);
+    for (size_t i = 0; i < (size < 32 ? size : 32); i++) {
+        printf("%02X ", ((uint8_t*)keydef)[i]);
+    }
+    printf("\n");
+
     int ret = kvs_set(key, keydef, size);
+    printf("keydef_save: kvs_set returned: %d (%s)\n", ret, ret == 0 ? "SUCCESS" : kvs_strerror(ret));
 
     if (ret != 0) {
         printf("keydef_save: FAILED to save keydef '%s': %s\n",
@@ -71,14 +83,48 @@ bool keydef_save(const keydef_t *keydef) {
 
     printf("keydef_save: Successfully saved keydef '%s'\n", key);
 
-    // IMMEDIATE TEST: Try to read it back right away before anything changes
-    printf("keydef_save: IMMEDIATE VERIFICATION - trying to read back...\n");
+    // IMMEDIATE TEST: First try writing a simple string to verify kvstore works
+    printf("keydef_save: KVSTORE BASIC TEST - writing simple string...\n");
+    const char *test_val = "test123";
+    ret = kvs_set("test.key", test_val, strlen(test_val) + 1);
+    printf("keydef_save: KVSTORE BASIC TEST write: %s\n", ret == 0 ? "SUCCESS" : kvs_strerror(ret));
+
+    if (ret == 0) {
+        char read_buf[32];
+        size_t read_size;
+        ret = kvs_get("test.key", read_buf, sizeof(read_buf), &read_size);
+        printf("keydef_save: KVSTORE BASIC TEST read: %s", ret == 0 ? "SUCCESS" : kvs_strerror(ret));
+        if (ret == 0) {
+            printf(" (value='%s')", read_buf);
+        }
+        printf("\n");
+    }
+
+    // Now try to read back the actual keydef
+    printf("keydef_save: IMMEDIATE VERIFICATION - trying to read back keydef...\n");
     size_t verify_size;
     ret = kvs_get_any(key, NULL, 0, &verify_size);
+    printf("keydef_save: IMMEDIATE VERIFICATION: %s", ret == 0 ? "SUCCESS" : kvs_strerror(ret));
     if (ret == 0) {
-        printf("keydef_save: IMMEDIATE VERIFICATION SUCCESS - size=%zu\n", verify_size);
-    } else {
-        printf("keydef_save: IMMEDIATE VERIFICATION FAILED: %s\n", kvs_strerror(ret));
+        printf(" (size=%zu, expected=%zu)", verify_size, size);
+    }
+    printf("\n");
+
+    // If successful, try reading the actual data
+    if (ret == 0 && verify_size == size) {
+        uint8_t *verify_buf = malloc(verify_size);
+        if (verify_buf) {
+            ret = kvs_get_any(key, verify_buf, verify_size, &verify_size);
+            printf("keydef_save: IMMEDIATE READ DATA: %s\n", ret == 0 ? "SUCCESS" : kvs_strerror(ret));
+            if (ret == 0) {
+                printf("keydef_save: Read back hex (first %zu bytes): ", verify_size < 32 ? verify_size : 32);
+                for (size_t i = 0; i < (verify_size < 32 ? verify_size : 32); i++) {
+                    printf("%02X ", verify_buf[i]);
+                }
+                printf("\n");
+            }
+            free(verify_buf);
+        }
     }
 
     return true;
