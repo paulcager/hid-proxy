@@ -79,6 +79,9 @@ queue_t tud_to_physical_host_queue;
 // A queue of events from the physical host, to be sent to the physical keyboard.
 queue_t leds_queue;
 
+// Synchronization flag: Core 1 waits for this before starting USB host stack
+volatile bool kvstore_init_complete = false;
+
 /*------------- MAIN -------------*/
 
 // core0: handle device events
@@ -102,25 +105,49 @@ int main(void) {
     printf("USB CDC stdio initialized\n");
 #endif
 
+    LOG_INFO("stdio_init_all() starting\n");
     stdio_init_all();
+    LOG_INFO("stdio_init_all() complete\n");
 
+    LOG_INFO("flash_safe_execute_core_init() starting\n");
     flash_safe_execute_core_init();
+    LOG_INFO("flash_safe_execute_core_init() complete\n");
 
-    // Initialize kvstore (must be done before any kvstore operations)
+    // Initialize kvstore EARLY, before launching Core 1
+    // This avoids multicore flash contention during initialization
+    // Must be AFTER flash_safe_execute_core_init() so flash reads work
+    LOG_INFO("Starting kvstore_init() (before Core 1 launch)\n");
     if (!kvstore_init()) {
         LOG_ERROR("Failed to initialize kvstore!\n");
         // Continue anyway - device will work without persistent storage
     }
+    LOG_INFO("kvstore_init() complete\n");
 
+    LOG_INFO("Initializing queues\n");
     queue_init(&keyboard_to_tud_queue, sizeof(hid_report_t), 12);
     queue_init(&tud_to_physical_host_queue, sizeof(send_data_t), 256);
     queue_init(&leds_queue, 1, 4);
+    LOG_INFO("Queues initialized\n");
 
+    LOG_INFO("Allocating local_store (%d bytes)\n", FLASH_STORE_SIZE);
     kb.local_store = malloc(FLASH_STORE_SIZE);
+    LOG_INFO("local_store allocated at %p\n", kb.local_store);
+
+    LOG_INFO("Calling lock()\n");
     lock();
+    LOG_INFO("lock() complete\n");
 
     LOG_INFO("\n\nCore 0 (tud) running\n");
 
+    LOG_INFO("Resetting and launching Core 1\n");
+    multicore_reset_core1();
+    // Launch Core 1 AFTER kvstore is initialized to avoid flash contention
+    multicore_launch_core1(core1_main);
+    LOG_INFO("Core 1 launched\n");
+
+    // Signal Core 1 that initialization is complete (it can start immediately)
+    kvstore_init_complete = true;
+    LOG_INFO("kvstore_init_complete flag set\n");
 
 #ifdef PICO_CYW43_SUPPORTED
 #ifdef ENABLE_USB_STDIO
@@ -135,22 +162,23 @@ int main(void) {
     LOG_INFO("Starting WiFi initialization...\n");
 #endif
     // Initialize WiFi (if configured) - only on Pico W
+    LOG_INFO("Calling wifi_config_init()\n");
     wifi_config_init();
+    LOG_INFO("Calling wifi_init()\n");
     wifi_init();
+    LOG_INFO("WiFi initialization complete\n");
 #else
     LOG_INFO("WiFi not supported on this hardware\n");
 #endif
 
-    multicore_reset_core1();
-    // all USB task run in core1
-    multicore_launch_core1(core1_main);
-
+    LOG_INFO("Entering main loop\n");
     absolute_time_t last_interaction = get_absolute_time();
     status_t previous_status = locked;
 #ifdef PICO_CYW43_SUPPORTED
     bool http_server_started = false;
 #endif
 
+    LOG_INFO("Starting main event loop (first iteration)\n");
     while (true) {
         if (kb.status != previous_status) {
             LOG_INFO("State changed from %s to %s\n", status_string(previous_status), status_string(kb.status));

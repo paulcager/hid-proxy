@@ -29,8 +29,8 @@ void assert_sane_func(char *file, int line, kb_t *k) {
         sane &= !all_zero(k->local_store->iv, sizeof(k->local_store->iv));
 
         // Check for uninitialized / corrupt keydefs. Sizes > 0xfff (or < 0) seem improbable.
-        sane &= (k->local_store->keydefs[0].used & ~0x0fff) == 0;
-        sane &= (k->local_store->keydefs[0].keycode & ~0x00ff) == 0;
+        sane &= (k->local_store->keydefs[0].count & ~0x0fff) == 0;
+        sane &= (k->local_store->keydefs[0].trigger & ~0x00ff) == 0;
     }
 
     if (sane) {
@@ -39,7 +39,7 @@ void assert_sane_func(char *file, int line, kb_t *k) {
     } else {
         printf("KB structure @%p looks to be corrupt [%s:%d]\n", k, file, line);
         printf("Status is %d\n", k->status);
-        printf("keydef[0].used=0x%0x, keydef[0].used=0x%0x\n", k->local_store->keydefs[0].used, k->local_store->keydefs[0].keycode);
+        printf("keydef[0].count=0x%0x, keydef[0].trigger=0x%0x\n", k->local_store->keydefs[0].count, k->local_store->keydefs[0].trigger);
         printf("IV:              "); hex_dump(k->local_store->iv, 16);
         printf("Magic:           "); hex_dump(k->local_store->magic, sizeof(k->local_store->magic));
         printf("Encrypted Magic: "); hex_dump(k->local_store->encrypted_magic, sizeof(k->local_store->encrypted_magic));

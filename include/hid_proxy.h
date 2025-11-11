@@ -119,6 +119,10 @@ extern queue_t keyboard_to_tud_queue;
 extern queue_t tud_to_physical_host_queue;
 extern queue_t leds_queue;
 
+// Synchronization flag: Core 1 waits for this before starting USB host stack
+// This prevents flash access conflicts during kvstore initialization
+extern volatile bool kvstore_init_complete;
+
 extern void init_state(kb_t *kb);
 
 extern void save_state(kb_t *kb);

@@ -48,6 +48,10 @@ bool kvstore_init(void) {
     }
     printf("kvstore_init: Flash block device created\n");
 
+    // Note: If flash is uninitialized, kvstore operations will fail gracefully
+    // Use 'picotool load -o 0x101E0000 kvstore.bin' to format the flash region
+    // Or use kvstore-util to create and flash a blank image
+
     // Create log-structured KVS for wear leveling
     kvs_t *logkvs = kvs_logkvs_create(blockdev);
     if (logkvs == NULL) {
@@ -68,19 +72,13 @@ bool kvstore_init(void) {
     printf("kvstore_init: Secure KVS created\n");
 
     // Assign as global instance
+    printf("kvstore_init: Assigning global KVS instance\n");
     kvs_assign(securekvs);
+    printf("kvstore_init: Global KVS assigned\n");
 
-    // Initialize the kvstore by calling the init method
-    int ret = securekvs->init(securekvs);
-    if (ret != 0) {
-        printf("kvstore_init: securekvs->init() failed with error %d\n", ret);
-        kvs_securekvs_free(securekvs);
-        kvs_logkvs_free(logkvs);
-        blockdevice_flash_free(blockdev);
-        return false;
-    }
-
-    printf("kvstore_init: Initialization complete\n");
+    // Note: kvs_logkvs_create() already initializes everything during creation
+    // There's no separate init() method - initialization happens in the create functions
+    printf("kvstore_init: Initialization complete (no separate init needed)\n");
     return true;
 }
 

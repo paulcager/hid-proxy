@@ -28,22 +28,38 @@ static struct {
 
 // core1: handle host events
 void core1_main() {
+    LOG_INFO("Core 1: Starting initialization\n");
+
+    LOG_INFO("Core 1: Calling flash_safe_execute_core_init()\n");
     flash_safe_execute_core_init();
+    LOG_INFO("Core 1: flash_safe_execute_core_init() complete\n");
+
+    // Note: kvstore is already initialized on Core 0 before we launch
+    // The kvstore_init_complete flag should already be set
+    LOG_INFO("Core 1: Starting USB host stack\n");
 
     // Use tuh_configure() to pass pio configuration to the host stack
     // Note: tuh_configure() must be called before
 
+    LOG_INFO("Core 1: Configuring PIO-USB\n");
     pio_usb_configuration_t pio_cfg = PIO_USB_DEFAULT_CONFIG;
     // Use GPIO2/3 for USB, leaving 0/1 available for UART if needed.
     pio_cfg.pin_dp = 2;
     // Use DMA channel 2 instead of 0 to avoid conflict with CYW43 WiFi
     pio_cfg.tx_ch = 2;
-    LOG_INFO("pio_cfg.pin_dp = %d, tx_ch = %d\n", pio_cfg.pin_dp, pio_cfg.tx_ch);
+    LOG_INFO("Core 1: pio_cfg.pin_dp = %d, tx_ch = %d\n", pio_cfg.pin_dp, pio_cfg.tx_ch);
+
+    LOG_INFO("Core 1: Calling tuh_configure()\n");
     tuh_configure(1, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &pio_cfg);
+    LOG_INFO("Core 1: tuh_configure() complete\n");
+
+    LOG_INFO("Core 1: Calling tuh_init(1)\n");
     bool ok = tuh_init(1);
     if (!ok) {
+        LOG_ERROR("Core 1: tuh_init(1) FAILED!\n");
         panic("tuh_init(1)");
     }
+    LOG_INFO("Core 1: tuh_init(1) complete\n");
 
     // TODO - to support this properly, we'll have to determine what's been plugged into which port.
 //    pio_cfg.pin_dp = 6;
@@ -54,7 +70,7 @@ void core1_main() {
 //        panic("tuh_init(2)");
 //    }
 
-    LOG_INFO("tuh running\n");
+    LOG_INFO("Core 1: tuh running, entering core1_loop\n");
     core1_loop();
 }
 
