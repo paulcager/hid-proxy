@@ -139,8 +139,8 @@ To access special functions:
 
 | Key      | Description                                                                                                                                                |
 |----------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `ENTER`  | **When locked:** Start passphrase entry to unlock encrypted key definitions. Type your passphrase, then press `ENTER` again to submit.                     |
-| `INSERT` | **When unlocked:** Change passphrase and re-encrypt key definitions. Type new passphrase, then press `ENTER` to save.                                      |
+| `ENTER`  | **When locked:** Start passphrase entry to unlock encrypted key definitions. Type your passphrase, then press `ENTER` again to submit. Wrong passwords are rejected. |
+| `INSERT` | **When unlocked:** Change passphrase. **Note:** Password change re-encryption not yet implemented - must erase device to change password.                  |
 | `ESC`    | Cancel the current operation (e.g., exit passphrase entry or key definition mode).                                                                         |
 | `DEL`    | **Erase everything** - immediately deletes encryption key and all key definitions from flash. No confirmation prompt. Cannot be undone!                    |
 | `END`    | Lock device and clear decrypted key definitions from memory. Encrypted data in flash is preserved. Re-enter passphrase (double-shift + `ENTER`) to unlock. |
@@ -151,19 +151,21 @@ To access special functions:
 
 ### First-Time Setup
 
-A freshly flashed device starts in the **unlocked** state with no passphrase or key definitions.
+A freshly flashed device starts in the **blank** state with no passphrase or key definitions.
 
 To set up encryption:
 1. **Double-shift** + `INSERT` to start setting a passphrase
 2. Type your desired passphrase (letters, numbers, symbols - any keys on your keyboard)
 3. Press `ENTER` to save
-4. The passphrase is used to derive an encryption key (via PBKDF2) that protects your private key definitions in flash
+4. The passphrase is used to derive an encryption key (via PBKDF2-SHA256) that protects your private key definitions in flash
+5. A SHA256 hash of the encryption key is stored for password validation on subsequent unlocks
 
 **Important:**
 - Passphrases support any keyboard characters (keycodes only, not multi-byte Unicode)
 - Private keydefs (default) require unlock to access
 - Public keydefs work even when locked (useful for non-sensitive macros)
-- If you enter the wrong passphrase when unlocking, the device stays locked with no visible feedback (check serial debug output for errors)
+- **Password validation works:** Wrong passwords are rejected, keeping encryption key out of memory
+- **Password change not implemented:** To change password, you must erase device (double-shift + DEL) and start over
 - There's no password recovery - if you forget it, use double-shift + `DEL` to erase and start over
 
 ### Editing Macros via HTTP API (Pico W Only)
@@ -380,16 +382,19 @@ See **BUGS.md** for a comprehensive list of 34+ bugs including:
 - ~~Weak encryption (#31, #32, #34)~~ - Improved: Now using AES-128-GCM with authentication (pico-kvstore/mbedtls)
 
 **Recent Improvements (November 2025):**
-- Migrated from custom flash storage to pico-kvstore
-- Upgraded from AES-256-CTR to AES-128-GCM with authentication
-- Added public/private keydef support (public macros work when locked)
-- Implemented on-demand loading to reduce memory usage
-- See **KVSTORE_MIGRATION.md** for complete migration details
+- ✅ Migrated from custom flash storage to pico-kvstore with on-demand loading
+- ✅ Upgraded encryption: AES-128-GCM with authentication (mbedtls)
+- ✅ Password validation: SHA256 hash verification, rejects incorrect passwords
+- ✅ Public/private keydef support (public macros work when locked)
+- ✅ Removed 10-second WiFi startup delay
+- ✅ Cleaned up deprecated code (kb.local_store removed)
+- See **KVSTORE_STATUS.md** for current status and **KVSTORE_MIGRATION.md** for migration details
 
 ## Technical Documentation
 
 For detailed technical information, see:
-- **CLAUDE.md** - Architecture, code locations, building instructions
+- **CLAUDE.md** - Architecture, code locations, building instructions (updated with current encryption design)
+- **KVSTORE_STATUS.md** - Current status, completed work, and remaining TODOs
 - **KVSTORE_MIGRATION.md** - Details of the pico-kvstore migration (completed November 2025)
 - **WIFI_SETUP.md** - WiFi and HTTP API configuration guide (Pico W only)
 - **BUGS.md** - Comprehensive bug analysis

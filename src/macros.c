@@ -1,4 +1,5 @@
 #include "macros.h"
+#include "keydef_store.h"
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
@@ -418,6 +419,285 @@ static char keycode_to_ascii(uint8_t keycode, uint8_t modifier) {
     return 0;
 }
 
+// New kvstore-based version
+bool parse_macros_to_kvstore(const char* input_buffer) {
+    const char* p = input_buffer;
+    int keydefs_saved = 0;
+
+    // First pass: Delete all existing keydefs
+    printf("parse_macros_to_kvstore: Deleting existing keydefs...\n");
+    uint8_t triggers[256];
+    int count = keydef_list(triggers, 256);
+    for (int i = 0; i < count; i++) {
+        keydef_delete(triggers[i]);
+    }
+    printf("parse_macros_to_kvstore: Deleted %d existing keydefs\n", count);
+
+    // Parse and save each keydef
+    while (*p) {
+        // Skip whitespace and comments
+        while (*p && (isspace((unsigned char)*p) || *p == '#')) {
+            if (*p == '#') {
+                while (*p && *p != '\n') p++;
+            } else {
+                p++;
+            }
+        }
+
+        if (!*p) break;
+
+        // Parse optional [public] or [private] modifier
+        bool require_unlock = true;  // Default to private
+        if (*p == '[') {
+            p++;
+            if (strncmp(p, "public", 6) == 0) {
+                require_unlock = false;
+                p += 6;
+            } else if (strncmp(p, "private", 7) == 0) {
+                require_unlock = true;
+                p += 7;
+            }
+            // Skip to ']'
+            while (*p && *p != ']') p++;
+            if (*p == ']') p++;
+            // Skip whitespace after ]
+            while (*p && isspace((unsigned char)*p)) p++;
+        }
+
+        // Parse trigger
+        uint8_t trigger = parse_trigger(&p);
+        if (trigger == 0) {
+            printf("parse_macros_to_kvstore: Invalid trigger, skipping\n");
+            // Skip to next line
+            while (*p && *p != '\n') p++;
+            continue;
+        }
+
+        // Skip to '{'
+        while (*p && *p != '{') p++;
+        if (*p != '{') break;
+        p++; // skip '{'
+
+        // Allocate temporary keydef (max 64 reports)
+        keydef_t* def = keydef_alloc(trigger, 64);
+        if (def == NULL) {
+            printf("parse_macros_to_kvstore: Failed to allocate keydef\n");
+            return false;
+        }
+        def->count = 0;
+        def->require_unlock = require_unlock;
+
+        // Parse commands until '}'
+        void* limit = ((void*)def) + sizeof(keydef_t) + (64 * sizeof(hid_keyboard_report_t));
+        while (*p && *p != '}') {
+            // Skip whitespace
+            while (*p && isspace((unsigned char)*p)) p++;
+            if (*p == '}') break;
+
+            if (*p == '"') {
+                // Quoted string
+                p++;
+                while (*p && *p != '"') {
+                    char ch = *p;
+                    if (ch == '\\' && p[1]) {
+                        p++;
+                        ch = *p;
+                    }
+
+                    hid_mapping_t mapping = ascii_to_hid[(int)ch];
+                    if (!add_report(def, mapping.mod, mapping.key, limit)) {
+                        printf("parse_macros_to_kvstore: Buffer overflow\n");
+                        free(def);
+                        return false;
+                    }
+                    if (!add_report(def, 0x00, 0x00, limit)) {
+                        printf("parse_macros_to_kvstore: Buffer overflow\n");
+                        free(def);
+                        return false;
+                    }
+                    p++;
+                }
+                if (*p == '"') p++;
+
+            } else if (*p == '^') {
+                // Ctrl+key shorthand
+                p++;
+                if (*p >= 'a' && *p <= 'z') {
+                    uint8_t key = 0x04 + (*p - 'a');
+                    if (!add_report(def, 0x01, key, limit)) {
+                        printf("parse_macros_to_kvstore: Buffer overflow\n");
+                        free(def);
+                        return false;
+                    }
+                    p++;
+                } else if (*p >= 'A' && *p <= 'Z') {
+                    uint8_t key = 0x04 + (*p - 'A');
+                    if (!add_report(def, 0x01, key, limit)) {
+                        printf("parse_macros_to_kvstore: Buffer overflow\n");
+                        free(def);
+                        return false;
+                    }
+                    p++;
+                }
+
+            } else if (*p == '[') {
+                // Explicit report [mod:key]
+                p++;
+                uint8_t mod = (uint8_t)strtol(p, (char**)&p, 16);
+                if (*p == ':') p++;
+                uint8_t key = (uint8_t)strtol(p, (char**)&p, 16);
+                if (*p == ']') p++;
+
+                if (!add_report(def, mod, key, limit)) {
+                    printf("parse_macros_to_kvstore: Buffer overflow\n");
+                    free(def);
+                    return false;
+                }
+
+            } else {
+                // Mnemonic
+                char mnemonic[32];
+                int i = 0;
+                while (*p && !isspace((unsigned char)*p) && *p != '}' && *p != '"' && *p != '^' && *p != '[' && i < 31) {
+                    mnemonic[i] = *p;
+                    i++;
+                    p++;
+                }
+                mnemonic[i] = '\0';
+
+                if (i > 0) {
+                    uint8_t key = lookup_mnemonic_keycode(mnemonic);
+                    if (key) {
+                        if (!add_report(def, 0x00, key, limit)) {
+                            printf("parse_macros_to_kvstore: Buffer overflow\n");
+                            free(def);
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (*p == '}') p++;
+
+        // Save this keydef to kvstore
+        if (keydef_save(def)) {
+            keydefs_saved++;
+            printf("parse_macros_to_kvstore: Saved keydef 0x%02X (%s, %d reports)\n",
+                   trigger, require_unlock ? "private" : "public", def->count);
+        } else {
+            printf("parse_macros_to_kvstore: Failed to save keydef 0x%02X\n", trigger);
+            free(def);
+            return false;
+        }
+
+        free(def);
+    }
+
+    printf("parse_macros_to_kvstore: Successfully saved %d keydefs\n", keydefs_saved);
+    return true;
+}
+
+bool serialize_macros_from_kvstore(char* output_buffer, size_t buffer_size) {
+    char* p = output_buffer;
+    char* const limit = output_buffer + buffer_size;
+
+    p += snprintf(p, limit - p, "# Macros file - Format: [public|private] trigger { commands... }\n");
+    p += snprintf(p, limit - p, "# Commands: \"text\" MNEMONIC ^C [mod:key]\n");
+    p += snprintf(p, limit - p, "# [public] keydefs work when device is locked\n");
+    p += snprintf(p, limit - p, "# [private] keydefs require device unlock (default)\n\n");
+    if (p >= limit) {
+        printf("serialize_macros_from_kvstore: Buffer overflow in header\n");
+        return false;
+    }
+
+    // Get list of all keydefs from kvstore
+    uint8_t triggers[256];
+    int count = keydef_list(triggers, 256);
+
+    printf("serialize_macros_from_kvstore: Found %d keydefs\n", count);
+
+    // Serialize each keydef
+    for (int idx = 0; idx < count; idx++) {
+        keydef_t* def = keydef_load(triggers[idx]);
+        if (def == NULL) {
+            printf("serialize_macros_from_kvstore: Failed to load keydef 0x%02X\n", triggers[idx]);
+            continue;
+        }
+
+        // Write [public] or [private] modifier
+        const char* privacy = def->require_unlock ? "[private] " : "[public] ";
+        int written = snprintf(p, limit - p, "%s", privacy);
+        if (written < 0 || p + written >= limit) {
+            printf("serialize_macros_from_kvstore: Buffer overflow\n");
+            free(def);
+            return false;
+        }
+        p += written;
+
+        // Write trigger (prefer mnemonic or ASCII)
+        const char* mnemonic = keycode_to_mnemonic(def->trigger);
+        char ascii = keycode_to_ascii(def->trigger, 0);
+
+        if (mnemonic) {
+            written = snprintf(p, limit - p, "%s { ", mnemonic);
+        } else if (ascii >= 32 && ascii <= 126) {
+            written = snprintf(p, limit - p, "%c { ", ascii);
+        } else {
+            written = snprintf(p, limit - p, "0x%02x { ", def->trigger);
+        }
+        if (written < 0 || p + written >= limit) {
+            printf("serialize_macros_from_kvstore: Buffer overflow\n");
+            free(def);
+            return false;
+        }
+        p += written;
+
+        // Serialize reports - simplified version (just output raw for now)
+        for (int i = 0; i < def->count; i++) {
+            const hid_keyboard_report_t* rep = &def->reports[i];
+
+            // Check for Ctrl+key shorthand
+            if (rep->modifier == 0x01 && rep->keycode[0] >= 0x04 && rep->keycode[0] <= 0x1d) {
+                char ctrl_char = 'a' + (rep->keycode[0] - 0x04);
+                written = snprintf(p, limit - p, "^%c ", ctrl_char);
+            } else if (rep->modifier == 0 && rep->keycode[0] == 0) {
+                // Key release - skip for brevity
+                continue;
+            } else {
+                // Mnemonic or raw format
+                const char* key_mnemonic = keycode_to_mnemonic(rep->keycode[0]);
+                if (key_mnemonic && rep->modifier == 0) {
+                    written = snprintf(p, limit - p, "%s ", key_mnemonic);
+                } else {
+                    written = snprintf(p, limit - p, "[%02x:%02x] ", rep->modifier, rep->keycode[0]);
+                }
+            }
+
+            if (written < 0 || p + written >= limit) {
+                printf("serialize_macros_from_kvstore: Buffer overflow\n");
+                free(def);
+                return false;
+            }
+            p += written;
+        }
+
+        // Close the definition
+        written = snprintf(p, limit - p, "}\n");
+        if (written < 0 || p + written >= limit) {
+            printf("serialize_macros_from_kvstore: Buffer overflow\n");
+            free(def);
+            return false;
+        }
+        p += written;
+
+        free(def);
+    }
+
+    return true;
+}
+
+// Old store_t-based version (deprecated)
 bool serialize_macros(const store_t* store, char* output_buffer, size_t buffer_size) {
     char* p = output_buffer;
     char* const limit = output_buffer + buffer_size;

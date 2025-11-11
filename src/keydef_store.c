@@ -47,11 +47,13 @@ bool keydef_save(const keydef_t *keydef) {
 
     size_t size = keydef_size(keydef);
 
-    printf("keydef_save: Saving keydef '%s' (0x%02X, %u reports, %zu bytes)\n",
-              key, keydef->trigger, keydef->count, size);
+    printf("keydef_save: Saving keydef '%s' (0x%02X, %u reports, %zu bytes, %s)\n",
+              key, keydef->trigger, keydef->count, size,
+              keydef->require_unlock ? "PRIVATE" : "PUBLIC");
 
-    // Direct kvs_set call (no encryption)
-    int ret = kvs_set(key, keydef, size);
+    // Private keydefs are encrypted, public keydefs are not
+    bool encrypt = keydef->require_unlock;
+    int ret = kvstore_set_value(key, keydef, size, encrypt);
 
     if (ret != 0) {
         printf("keydef_save: FAILED to save keydef '%s': %s\n",
@@ -78,9 +80,10 @@ keydef_t *keydef_load(uint8_t trigger) {
         return NULL;
     }
 
-    // Read the keydef
+    // Read the keydef using wrapper (handles header)
     size_t actual_size;
-    int ret = kvs_get(key, temp_buffer, max_size, &actual_size);
+    bool is_encrypted;
+    int ret = kvstore_get_value(key, temp_buffer, max_size, &actual_size, &is_encrypted);
 
     if (ret != 0) {
         if (ret == KVSTORE_ERROR_ITEM_NOT_FOUND) {
@@ -93,7 +96,8 @@ keydef_t *keydef_load(uint8_t trigger) {
         return NULL;
     }
 
-    printf("keydef_load: Successfully read keydef '%s', size=%zu bytes\n", key, actual_size);
+    printf("keydef_load: Successfully read keydef '%s', size=%zu bytes (%s)\n",
+           key, actual_size, is_encrypted ? "ENCRYPTED" : "UNENCRYPTED");
 
     // Sanity check the size
     if (actual_size < sizeof(keydef_t)) {

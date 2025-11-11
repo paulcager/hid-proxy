@@ -367,14 +367,25 @@ void print_keydefs() {
     while (kvs_find_next(&ctx, key, sizeof(key)) == 0) {
         printf("DEBUG: Found key '%s'\n", key);
 
-        // Try to get size without loading full value
-        size_t size;
-        int get_ret = kvs_get(key, NULL, 0, &size);
-
-        if (get_ret == 0) {
-            printf("  %s (size=%zu bytes)\n", key, size);
+        // For keydefs, try to parse and show info
+        if (strncmp(key, "keydef.", 7) == 0) {
+            // Load the keydef to get accurate info
+            unsigned int trigger;
+            if (sscanf(key, "keydef.0x%X", &trigger) == 1) {
+                keydef_t *def = keydef_load((uint8_t)trigger);
+                if (def != NULL) {
+                    printf("  %s: %u reports (%s)\n", key, def->count,
+                           def->require_unlock ? "PRIVATE/ENCRYPTED" : "PUBLIC/UNENCRYPTED");
+                    free(def);
+                } else {
+                    printf("  %s: (failed to load)\n", key);
+                }
+            } else {
+                printf("  %s: (invalid key format)\n", key);
+            }
         } else {
-            printf("  %s (error: %s)\n", key, kvs_strerror(get_ret));
+            // For non-keydef keys, just show they exist
+            printf("  %s\n", key);
         }
         count++;
 

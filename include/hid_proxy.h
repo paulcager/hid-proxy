@@ -106,7 +106,6 @@ typedef struct {
 
 typedef struct {
     status_t status;
-    store_t *local_store;
     keydef_t *key_being_defined;
     uint8_t key_being_replayed;
     keydef_t *next_to_replay;

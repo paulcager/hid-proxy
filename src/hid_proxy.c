@@ -105,17 +105,12 @@ int main(void) {
     printf("USB CDC stdio initialized\n");
 #endif
 
-    LOG_INFO("stdio_init_all() starting\n");
     stdio_init_all();
-    LOG_INFO("stdio_init_all() complete\n");
 
-    LOG_INFO("flash_safe_execute_core_init() starting\n");
     flash_safe_execute_core_init();
     LOG_INFO("flash_safe_execute_core_init() complete\n");
 
     // Initialize kvstore EARLY, before launching Core 1
-    // This avoids multicore flash contention during initialization
-    // Must be AFTER flash_safe_execute_core_init() so flash reads work
     LOG_INFO("Starting kvstore_init() (before Core 1 launch)\n");
     if (!kvstore_init()) {
         LOG_ERROR("Failed to initialize kvstore!\n");
@@ -123,19 +118,12 @@ int main(void) {
     }
     LOG_INFO("kvstore_init() complete\n");
 
-    LOG_INFO("Initializing queues\n");
     queue_init(&keyboard_to_tud_queue, sizeof(hid_report_t), 12);
     queue_init(&tud_to_physical_host_queue, sizeof(send_data_t), 256);
     queue_init(&leds_queue, 1, 4);
-    LOG_INFO("Queues initialized\n");
 
-    LOG_INFO("Allocating local_store (%d bytes)\n", FLASH_STORE_SIZE);
-    kb.local_store = malloc(FLASH_STORE_SIZE);
-    LOG_INFO("local_store allocated at %p\n", kb.local_store);
-
-    LOG_INFO("Calling lock()\n");
-    lock();
-    LOG_INFO("lock() complete\n");
+    LOG_INFO("Setting initial state to locked\n");
+    kb.status = locked;
 
     LOG_INFO("\n\nCore 0 (tud) running\n");
 
@@ -150,17 +138,6 @@ int main(void) {
     LOG_INFO("kvstore_init_complete flag set\n");
 
 #ifdef PICO_CYW43_SUPPORTED
-#ifdef ENABLE_USB_STDIO
-    // Delay WiFi init to allow USB CDC to enumerate for debugging
-    // Use a polling loop instead of sleep to keep USB stack running
-    LOG_INFO("Delaying WiFi initialization for 10 seconds (USB CDC debug mode)...\n");
-    absolute_time_t wifi_start_time = make_timeout_time_ms(10000);
-    while (!time_reached(wifi_start_time)) {
-        tud_task(); // Process USB events during the delay
-        tight_loop_contents(); // Yield to other tasks
-    }
-    LOG_INFO("Starting WiFi initialization...\n");
-#endif
     // Initialize WiFi (if configured) - only on Pico W
     LOG_INFO("Calling wifi_config_init()\n");
     wifi_config_init();
@@ -328,8 +305,9 @@ void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report, uint16_
 }
 
 void lock() {
-    memset(kb.local_store, 0, FLASH_STORE_SIZE);
     kb.status = locked;
+    kvstore_clear_encryption_key();  // Clear encryption key from memory
+    enc_clear_key();  // Also clear the key in encryption.c
 }
 
 void hex_dump(void const *ptr, size_t len) {

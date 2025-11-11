@@ -41,24 +41,29 @@ Communication between cores uses three queues:
 - `seen_magic`/`expecting_command`: "Double shift" command mode activated
 - `defining`: Recording new key definition
 
-**Key Definitions** (key_defs.c): Stores mappings from single keystrokes to sequences of HID reports. Definitions are stored in `kb.local_store->keydefs` as a variable-length array of `keydef_t` structures.
+**Key Definitions** (key_defs.c): Stores mappings from single keystrokes to sequences of HID reports. Definitions are loaded on-demand from kvstore as individual `keydef_t` structures.
 
-**Macro Parsing/Serialization** (macros.c/h): Provides text format parser and serializer to convert between binary keydef format and human-readable text format with syntax: `trigger { "text" MNEMONIC ^C [mod:key] }`. These functions will be used for future network-based configuration (HTTP API).
+**Macro Parsing/Serialization** (macros.c/h): Provides text format parser and serializer to convert between binary keydef format and human-readable text format with syntax: `[public|private] trigger { "text" MNEMONIC ^C [mod:key] }`. Used for HTTP-based configuration via `/macros.txt` endpoint.
 
-**Storage** (kvstore_init.c, keydef_store.c): Uses pico-kvstore for persistent storage with three layers:
+**Storage** (kvstore_init.c, keydef_store.c): Uses pico-kvstore for persistent storage with encryption:
 - blockdevice_flash: Raw flash access with wear leveling
 - kvstore_logkvs: Log-structured key-value store
-- kvstore_securekvs: AES-128-GCM encryption layer with dual-key system
+- **Custom encryption layer** (kvstore_init.c): AES-128-GCM encryption with header system
 
 Key definitions are stored as individual key-value pairs (`keydef.0xHH`) and loaded on-demand, reducing memory usage. Public keydefs work when device is locked; private keydefs require unlock.
 
-**Dual-Key Encryption System** (kvstore_init.c): All data is encrypted, but using two different keys:
-- **default_key**: Hardcoded constant (0xDEFA1700...), always available. Used for public keydefs and WiFi credentials.
-- **secure_key**: PBKDF2-derived from user password, only available when unlocked. Used for private keydefs (passwords, sensitive macros).
+**Encryption Architecture** (kvstore_init.c): DIY encryption layer with header-based format:
+- **Storage format:** `[header(1)][data...]` where header indicates encryption status
+  - `0x00` = unencrypted (public keydefs, WiFi config)
+  - `0x01` = encrypted with AES-128-GCM (private keydefs)
+- **Encrypted format:** `[0x01][IV(12)][ciphertext][tag(16)]`
+- **Algorithm:** AES-128-GCM (authenticated encryption)
+- **Key derivation:** PBKDF2-SHA256 from user password with device-unique salt
+- **Password validation:** SHA256 hash of derived key stored at `auth.password_hash`
 
-The `secretkey_loader()` callback switches between keys based on context. The `kvs_get_any()` helper function provides transparent fallback: tries the current key first, then retries with the opposite key on authentication failure. This allows seamless access to both public and private data when unlocked, while restricting access to only public data when locked.
+On first use, any password is accepted and its hash is stored. Subsequent unlocks validate against this hash. Wrong passwords are rejected, keeping encryption key out of memory.
 
-**Encryption** (encryption.c/h): Uses PBKDF2 (SHA256-based) for key derivation from passphrase. Actual encryption/decryption is handled by kvstore's mbedtls integration (AES-128-GCM with authentication). Legacy `store_encrypt()`/`store_decrypt()` functions marked obsolete.
+**Encryption** (encryption.c/h): PBKDF2 (SHA256-based) key derivation from passphrase. The derived 16-byte key is used by kvstore_init.c for AES-128-GCM operations via mbedtls. Legacy `store_encrypt()`/`store_decrypt()` functions marked obsolete.
 
 **Flash Storage** (flash.c): Legacy file with backward-compatibility stubs. Functions like `save_state()` and `read_state()` are now no-ops; kvstore handles all persistence. `init_state()` clears kvstore and resets device to blank state.
 
@@ -66,7 +71,7 @@ The `secretkey_loader()` callback switches between keys based on context. The `k
 
 **USB Configuration** (tusb_config.h): Configures device stack with keyboard, mouse, and CDC interfaces. Host stack (via PIO-USB on GPIO2/3) configured for keyboard/mouse input.
 
-**WiFi Configuration** (wifi_config.c/h): Manages WiFi connection using CYW43 chip on Pico W. Stores WiFi credentials in kvstore (`wifi.ssid`, `wifi.password`, `wifi.country`) using the default (public) encryption key. WiFi credentials are not considered sensitive in this application context. Provides non-blocking WiFi connection that runs in background without affecting keyboard functionality.
+**WiFi Configuration** (wifi_config.c/h): Manages WiFi connection using CYW43 chip on Pico W. Stores WiFi credentials in kvstore (`wifi.ssid`, `wifi.password`, `wifi.country`) unencrypted. WiFi credentials are not considered sensitive in this application context. Provides non-blocking WiFi connection that runs in background without affecting keyboard functionality.
 
 **HTTP Server** (http_server.c/h): Implements lwIP-based HTTP server for macro configuration. Provides REST-like endpoints for GET/POST of macros in text format. Integrates with physical unlock system (both-shifts+SPACE) for security.
 
@@ -174,14 +179,15 @@ The text format for macros (used for HTTP/network configuration):
 - Interactive key definition: `start_define()` in key_defs.c (saves to kvstore when complete)
 - Physical unlock trigger: key_defs.c (both-shifts+HOME handler)
 - KVStore initialization: `kvstore_init()` in kvstore_init.c
-- Dual-key system: `secretkey_loader()`, `kvstore_use_default_key()`, `kvstore_use_secure_key()` in kvstore_init.c
-- Transparent key fallback: `kvs_get_any()` in kvstore_init.c (tries current key, then opposite on auth failure)
+- Password validation: `kvstore_set_encryption_key()` in kvstore_init.c (validates hash on unlock)
+- Encryption operations: `encrypt_gcm()`, `decrypt_gcm()` in kvstore_init.c (AES-128-GCM via mbedtls)
+- Storage wrappers: `kvstore_set_value()`, `kvstore_get_value()` in kvstore_init.c (handle headers + encryption)
 - Keydef storage API: `keydef_save()`, `keydef_load()`, `keydef_delete()`, `keydef_list()` in keydef_store.c
-- Macro parser: `parse_macros()` in macros.c (supports `[public]`/`[private]` syntax)
-- Macro serializer: `serialize_macros()` in macros.c (outputs privacy markers)
+- Macro parser: `parse_macros_to_kvstore()` in macros.c (parses text format, saves to kvstore)
+- Macro serializer: `serialize_macros_from_kvstore()` in macros.c (loads from kvstore, outputs text)
 - PBKDF2 key derivation: `enc_derive_key_from_password()` in encryption.c
-- Encryption/decryption: Handled by kvstore's mbedtls integration (AES-128-GCM)
-- Legacy stubs: `store_encrypt()`/`store_decrypt()` in encryption.c (marked obsolete)
+- Lock function: `lock()` in hid_proxy.c (clears encryption keys from memory)
+- Legacy stubs: `store_encrypt()`/`store_decrypt()` in encryption.c, `save_state()`/`read_state()` in flash.c
 - NFC state machine: `nfc_task()` in nfc_tag.c:373
 - USB host enumeration: `tuh_hid_mount_cb()` in usb_host.c:74
 - WiFi initialization: `wifi_init()` in wifi_config.c
@@ -195,26 +201,29 @@ The text format for macros (used for HTTP/network configuration):
 
 - `KVSTORE_SIZE`: 128KB for kvstore flash storage (kvstore_init.h)
 - `KVSTORE_OFFSET`: 0x1E0000 (last 128KB of 2MB flash) (kvstore_init.h)
-- `FLASH_STORE_SIZE`: Legacy constant, still used for temp_store buffer (hid_proxy.h:12)
 - `IDLE_TIMEOUT_MILLIS`: 120 minutes before auto-lock (hid_proxy.h:20)
 - Web access timeout: 5 minutes (wifi_config.c:web_access_enable)
 - NFC key storage address: Block `0x3A` on Mifare tag (nfc_tag.c:18)
 - I2C pins: SDA=4, SCL=5; PIO-USB pins: DP=2 (nfc_tag.c:12-13, usb_host.c:38)
 - mDNS hostname: `hidproxy-XXXX.local` where XXXX = last 4 hex digits of board ID (wifi_config.c)
 - Keydef key format: `keydef.0xHH` where HH is HID code (keydef_store.c)
-- WiFi key format: `wifi.ssid`, `wifi.password`, `wifi.country` (wifi_config.c)
-- Default encryption key: Hardcoded in kvstore_init.c (0xDEFA1700...), used for public data
+- WiFi key format: `wifi.ssid`, `wifi.password`, `wifi.country`, `wifi.enabled` (wifi_config.c)
+- Password hash key: `auth.password_hash` (32-byte SHA256 hash, unencrypted) (kvstore_init.h)
+- Header bytes: `0x00` = unencrypted, `0x01` = encrypted (kvstore_init.h)
+- Encryption overhead: 29 bytes per encrypted value (1 + 12 + 16) (kvstore_init.c)
 
 ## Known Issues/TODOs
 
-From README.md and code comments:
-1. ~~No buffer overflow protection on keystroke storage~~ ✅ Fixed: Keydef size limits enforced in Phase 3
-2. ~~Basic encryption implementation (not production-ready)~~ ✅ Improved: Now uses AES-128-GCM with authentication
-3. Poor user interface with no status feedback
-4. Code quality issues acknowledged by author
-5. Queue overflow handling needed (hid_proxy.c comment)
-6. USB stdio disabled for production (CMakeLists.txt:84-85 TODOs)
-7. Legacy flash.c code can be fully removed (currently stubs remain for compatibility)
+From README.md, code comments, and KVSTORE_STATUS.md:
+1. ~~No buffer overflow protection on keystroke storage~~ ✅ Fixed: Keydef size limits enforced
+2. ~~Basic encryption implementation (not production-ready)~~ ✅ Fixed: Now uses AES-128-GCM with authentication and password validation
+3. ~~WiFi 10-second startup delay~~ ✅ Fixed: Removed
+4. ~~kb.local_store memory allocation~~ ✅ Fixed: Removed, keydefs loaded on-demand from kvstore
+5. Poor user interface with no status feedback (no visual feedback for lock/unlock state)
+6. Password change not implemented (must erase device to change password)
+7. HTTP POST /macros.txt not tested (code written but needs validation)
+8. Queue overflow handling needed (hid_proxy.c comment)
+9. Legacy code can be removed: sane.c, old parse_macros()/serialize_macros(), store_t struct
 
 ## WiFi/HTTP Configuration
 

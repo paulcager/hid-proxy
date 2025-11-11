@@ -7,6 +7,7 @@
 #include "hid_proxy.h"
 #include "encryption.h"
 #include "kvstore_init.h"
+#include "kvstore.h"
 #include "keydef_store.h"
 
 // OBSOLETE: save_state() is no longer needed with kvstore
@@ -15,8 +16,8 @@
 void save_state(kb_t *kb) {
     // With kvstore, keydefs are saved individually via keydef_save()
     // This function is now a no-op
+    (void)kb;
     LOG_INFO("save_state() is obsolete with kvstore migration\n");
-    assert_sane(kb);
 }
 
 // OBSOLETE: read_state() is no longer needed with kvstore
@@ -24,8 +25,8 @@ void save_state(kb_t *kb) {
 void read_state(kb_t *kb) {
     // With kvstore, keydefs are loaded on-demand
     // This function is now a no-op
+    (void)kb;
     LOG_INFO("read_state() is obsolete with kvstore migration\n");
-    assert_sane(kb);
 }
 
 // Initialize device to blank/empty state
@@ -44,13 +45,11 @@ void init_state(kb_t *kb) {
         keydef_delete(triggers[i]);
     }
 
-    // Clear local store buffer
-    memset(kb->local_store, 0, FLASH_STORE_SIZE);
-    memcpy(kb->local_store->magic, FLASH_STORE_MAGIC, sizeof(kb->local_store->magic));
+    // Delete password hash to allow setting new password
+    kvs_delete(PASSWORD_HASH_KEY);
 
     kb->status = blank;
 
     LOG_INFO("Device initialized to blank state\n");
-    assert_sane(kb);
 }
 
