@@ -35,9 +35,13 @@ bool kvstore_init(void);
  * After the user unlocks the device (via passphrase or NFC),
  * call this to make encrypted keydefs accessible.
  *
+ * Validates the key against stored password hash. If no hash exists,
+ * stores a new hash (first password set).
+ *
  * \param key 16-byte AES-128 key (derived from passphrase via PBKDF2)
+ * \return true if password validated/set successfully, false if incorrect password
  */
-void kvstore_set_encryption_key(const uint8_t key[16]);
+bool kvstore_set_encryption_key(const uint8_t key[16]);
 
 /*! \brief Clear encryption key (on lock)
  *

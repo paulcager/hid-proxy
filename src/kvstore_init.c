@@ -9,8 +9,11 @@
 #include "kvstore_logkvs.h"
 #include "kvstore_securekvs.h"
 #include "blockdevice/flash.h"
+#include "tinycrypt/sha256.h"
 #include <string.h>
 #include <stdio.h>
+
+#define PASSWORD_HASH_KEY "password.hash"
 
 // Dual-key encryption system:
 // - default_key: hardcoded, always available, for public data (WiFi config, public keydefs)
@@ -36,8 +39,12 @@ static bool use_secure_key = false;  // Controls which key secretkey_loader retu
  */
 static int secretkey_loader(uint8_t *key) {
     if (use_secure_key && secure_key_available) {
+        printf("secretkey_loader: Providing SECURE key (first 4 bytes: %02X %02X %02X %02X)\n",
+               secure_key[0], secure_key[1], secure_key[2], secure_key[3]);
         memcpy(key, secure_key, 16);
     } else {
+        printf("secretkey_loader: Providing DEFAULT key (use_secure=%d, available=%d)\n",
+               use_secure_key, secure_key_available);
         memcpy(key, default_key, 16);
     }
     return 0;
@@ -93,11 +100,51 @@ bool kvstore_init(void) {
     return true;
 }
 
-void kvstore_set_encryption_key(const uint8_t key[16]) {
+bool kvstore_set_encryption_key(const uint8_t key[16]) {
+    // First, check if password hash exists and validate
+    uint8_t stored_hash[TC_SHA256_DIGEST_SIZE];
+    size_t hash_size;
+
+    kvstore_use_default_key();  // Hash is stored with default key
+    int ret = kvs_get(PASSWORD_HASH_KEY, stored_hash, sizeof(stored_hash), &hash_size);
+
+    if (ret == 0 && hash_size == TC_SHA256_DIGEST_SIZE) {
+        // Password hash exists - validate the key
+        struct tc_sha256_state_struct s;
+        uint8_t computed_hash[TC_SHA256_DIGEST_SIZE];
+
+        tc_sha256_init(&s);
+        tc_sha256_update(&s, key, 16);
+        tc_sha256_final(computed_hash, &s);
+
+        if (memcmp(stored_hash, computed_hash, TC_SHA256_DIGEST_SIZE) != 0) {
+            printf("kvstore_init: Password validation failed (incorrect password)\n");
+            return false;  // Wrong password
+        }
+        printf("kvstore_init: Password validated successfully\n");
+    } else {
+        // No hash stored yet - this is first password set, create hash
+        struct tc_sha256_state_struct s;
+        uint8_t computed_hash[TC_SHA256_DIGEST_SIZE];
+
+        tc_sha256_init(&s);
+        tc_sha256_update(&s, key, 16);
+        tc_sha256_final(computed_hash, &s);
+
+        kvstore_use_default_key();
+        ret = kvs_set(PASSWORD_HASH_KEY, computed_hash, TC_SHA256_DIGEST_SIZE);
+        if (ret != 0) {
+            printf("kvstore_init: Failed to store password hash: %s\n", kvs_strerror(ret));
+        } else {
+            printf("kvstore_init: Password hash stored (first password set)\n");
+        }
+    }
+
     memcpy(secure_key, key, 16);
     secure_key_available = true;
     use_secure_key = true;  // Switch to secure key mode
     printf("kvstore_init: Secure encryption key loaded (device unlocked)\n");
+    return true;
 }
 
 void kvstore_clear_encryption_key(void) {
@@ -125,21 +172,31 @@ void kvstore_use_secure_key(void) {
 
 int kvs_get_any(const char *key, void *buffer, size_t bufsize, size_t *actual_size) {
     // Try with current key context first
+    printf("kvs_get_any: Reading '%s', use_secure_key=%d, secure_key_available=%d\n",
+           key, use_secure_key, secure_key_available);
+
     int ret = kvs_get(key, buffer, bufsize, actual_size);
+    printf("kvs_get_any: First attempt with %s key: %s\n",
+           use_secure_key ? "SECURE" : "DEFAULT",
+           ret == 0 ? "SUCCESS" : kvs_strerror(ret));
 
     if (ret == KVSTORE_ERROR_AUTHENTICATION_FAILED) {
         // Authentication failed - try with opposite key
         bool was_secure = use_secure_key;
         use_secure_key = !was_secure;
 
+        printf("kvs_get_any: Retrying with %s key...\n",
+               use_secure_key ? "SECURE" : "DEFAULT");
+
         ret = kvs_get(key, buffer, bufsize, actual_size);
+        printf("kvs_get_any: Second attempt: %s\n",
+               ret == 0 ? "SUCCESS" : kvs_strerror(ret));
 
         // Restore original key context
         use_secure_key = was_secure;
 
         if (ret == 0) {
-            printf("kvs_get_any: Successfully read '%s' with %s key after initial auth failure\n",
-                   key, use_secure_key ? "default" : "secure");
+            printf("kvs_get_any: Successfully read '%s' with opposite key\n", key);
         }
     }
 

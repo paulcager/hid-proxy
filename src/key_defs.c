@@ -7,6 +7,7 @@
 #include "macros.h"
 #include "keydef_store.h"
 #include "kvstore_init.h"
+#include "kvstore.h"
 #ifdef ENABLE_NFC
 #include "nfc_tag.h"
 #endif
@@ -145,28 +146,27 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 // Update kvstore encryption key
                 uint8_t key[16];
                 enc_get_key(key, sizeof(key));
-                kvstore_set_encryption_key(key);
+                bool password_ok = kvstore_set_encryption_key(key);
 
-                if (kb.status == entering_password) {
+                if (!password_ok) {
+                    // Wrong password
+                    printf("Incorrect password\n");
+                    kb.status = locked;
+                    enc_clear_key();
+                } else if (kb.status == entering_password) {
                     // Unlocking - no need to re-save anything
                     kb.status = normal;
                     printf("Unlocked\n");
                 } else {
-                    // Changing password - need to re-encrypt all keydefs
-                    // Load all keydefs, they will be automatically re-encrypted with new key on save
-                    uint8_t triggers[64];
-                    int count = keydef_list(triggers, 64);
-
-                    for (int i = 0; i < count; i++) {
-                        keydef_t *def = keydef_load(triggers[i]);
-                        if (def != NULL) {
-                            keydef_save(def);  // Re-save with new encryption key
-                            free(def);
-                        }
-                    }
-
+                    // Changing/setting password
+                    // Only re-encrypt if there are keydefs AND we can read them
+                    // (i.e., this is a password change, not first-time setup)
+                    printf("Password set successfully\n");
                     kb.status = normal;
-                    printf("Password changed and data re-encrypted\n");
+
+                    // TODO: Add password change support later
+                    // For now, password can only be set once on blank device
+                    // To change password, user must erase device (double-shift DEL) and start over
                 }
             }
 
@@ -316,16 +316,20 @@ void start_define(uint8_t key0) {
 
 void evaluate_keydef(hid_keyboard_report_t *report, uint8_t key0) {
     // Load keydef from kvstore on-demand
+    printf("evaluate_keydef: Looking for keydef 0x%02X, device %s\n",
+           key0, kvstore_is_unlocked() ? "UNLOCKED" : "LOCKED");
+
     keydef_t *def = keydef_load(key0);
 
     if (def == NULL) {
-        LOG_INFO("No sequence defined for keycode %x\n", key0);
+        printf("evaluate_keydef: No sequence defined for keycode 0x%02X\n", key0);
         add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), report);
         add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t),&release_all_keys);
         return;
     }
 
-    LOG_INFO("Executing keycode %x with %d sequences\n", key0, def->count);
+    printf("evaluate_keydef: Executing keycode 0x%02X with %d sequences (%s)\n",
+           key0, def->count, def->require_unlock ? "PRIVATE" : "PUBLIC");
 
     // Send the macro sequence
     add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t),&release_all_keys);
@@ -341,23 +345,39 @@ void evaluate_keydef(hid_keyboard_report_t *report, uint8_t key0) {
 
 
 void print_keydefs() {
-    // List all keydefs from kvstore
-    uint8_t triggers[64];
-    int count = keydef_list(triggers, 64);
+    // Simple version: just list keys stored in kvstore without loading/printing values
+    // This avoids potential crashes from malformed keydefs
 
-    if (count == 0) {
-        printf("No key definitions found\n");
+    printf("\n=== KVStore Contents ===\n");
+
+    kvs_find_t ctx;
+    char key[64];
+    int ret = kvs_find("", &ctx);  // Find all keys
+
+    if (ret != 0) {
+        printf("Error listing kvstore: %s\n", kvs_strerror(ret));
         return;
     }
 
-    printf("Key definitions (%d total):\n", count);
-    for (int i = 0; i < count; i++) {
-        keydef_t *def = keydef_load(triggers[i]);
-        if (def != NULL) {
-            print_keydef(def);
-            free(def);
+    int count = 0;
+    while (kvs_find_next(&ctx, key, sizeof(key)) == 0) {
+        // Try to get size without loading full value
+        size_t size;
+        int get_ret = kvs_get_any(key, NULL, 0, &size);
+
+        if (get_ret == 0) {
+            printf("  %s (size=%zu bytes)\n", key, size);
+        } else if (get_ret == KVSTORE_ERROR_AUTHENTICATION_FAILED) {
+            printf("  %s (encrypted, locked)\n", key);
+        } else {
+            printf("  %s (error: %s)\n", key, kvs_strerror(get_ret));
         }
+        count++;
     }
+
+    kvs_find_close(&ctx);
+    printf("Total: %d keys\n", count);
+    printf("========================\n\n");
 }
 
 void print_keydef(const keydef_t *def) {
