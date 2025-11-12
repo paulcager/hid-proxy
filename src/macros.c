@@ -23,7 +23,7 @@ static const hid_mapping_t ascii_to_hid[164] = {
     ['$'] = {0x02, 0x21}, // Shift+4
     ['%'] = {0x02, 0x22}, // Shift+5
     ['&'] = {0x02, 0x24}, // Shift+7
-    [0x27] = {0x00, 0x34}, // Apostrophe/At key
+    ['\''] = {0x00, 0x34}, // Apostrophe/At key
     ['('] = {0x02, 0x26}, // Shift+9
     [')'] = {0x02, 0x27}, // Shift+0
     ['*'] = {0x02, 0x25}, // Shift+8
@@ -653,36 +653,87 @@ bool serialize_macros_from_kvstore(char* output_buffer, size_t buffer_size) {
         }
         p += written;
 
-        // Serialize reports - simplified version (just output raw for now)
-        // TODO: Detect sequences of printable characters and output as quoted strings
-        // e.g., "hello" instead of H E L L O
-        // See old serialize_macros() (lines 701-805 before removal) in git history for reference
-        for (int i = 0; i < def->count; i++) {
-            const hid_keyboard_report_t* rep = &def->reports[i];
+        // Serialize reports - detect text sequences and output as quoted strings
+        for (int i = 0; i < def->count; ) {
+            // Check if this is a printable character sequence (press + release pairs)
+            bool is_text_sequence = false;
+            int text_start = i;
+            int text_len = 0;
 
-            // Check for Ctrl+key shorthand
-            if (rep->modifier == 0x01 && rep->keycode[0] >= 0x04 && rep->keycode[0] <= 0x1d) {
-                char ctrl_char = 'a' + (rep->keycode[0] - 0x04);
-                written = snprintf(p, limit - p, "^%c ", ctrl_char);
-            } else if (rep->modifier == 0 && rep->keycode[0] == 0) {
-                // Key release - skip for brevity
-                continue;
-            } else {
-                // Mnemonic or raw format
-                const char* key_mnemonic = keycode_to_mnemonic(rep->keycode[0]);
-                if (key_mnemonic && rep->modifier == 0) {
-                    written = snprintf(p, limit - p, "%s ", key_mnemonic);
+            // Look for text sequences: press with ASCII, then release
+            while (i + 1 < def->count &&
+                   def->reports[i + 1].modifier == 0 &&
+                   def->reports[i + 1].keycode[0] == 0) {
+                char ch = keycode_to_ascii(def->reports[i].keycode[0], def->reports[i].modifier);
+                if (ch >= 32 && ch <= 126) {
+                    is_text_sequence = true;
+                    text_len++;
+                    i += 2; // Skip press and release
                 } else {
-                    written = snprintf(p, limit - p, "[%02x:%02x] ", rep->modifier, rep->keycode[0]);
+                    break;
                 }
             }
 
-            if (written < 0 || p + written >= limit) {
-                printf("serialize_macros_from_kvstore: Buffer overflow\n");
-                free(def);
-                return false;
+            if (is_text_sequence && text_len > 0) {
+                // Output as quoted string
+                written = snprintf(p, limit - p, "\"");
+                if (written < 0 || p + written >= limit) {
+                    printf("serialize_macros_from_kvstore: Buffer overflow\n");
+                    free(def);
+                    return false;
+                }
+                p += written;
+
+                for (int j = text_start; j < text_start + text_len * 2; j += 2) {
+                    char ch = keycode_to_ascii(def->reports[j].keycode[0], def->reports[j].modifier);
+                    if (ch == '"' || ch == '\\') {
+                        written = snprintf(p, limit - p, "\\%c", ch);
+                    } else {
+                        written = snprintf(p, limit - p, "%c", ch);
+                    }
+                    if (written < 0 || p + written >= limit) {
+                        printf("serialize_macros_from_kvstore: Buffer overflow\n");
+                        free(def);
+                        return false;
+                    }
+                    p += written;
+                }
+
+                written = snprintf(p, limit - p, "\" ");
+                if (written < 0 || p + written >= limit) {
+                    printf("serialize_macros_from_kvstore: Buffer overflow\n");
+                    free(def);
+                    return false;
+                }
+                p += written;
+            } else {
+                // Output as raw report or mnemonic or ^X notation
+                const hid_keyboard_report_t* rep = &def->reports[i];
+
+                // Check for Ctrl+key shorthand
+                if (rep->modifier == 0x01 && rep->keycode[0] >= 0x04 && rep->keycode[0] <= 0x1d) {
+                    char ctrl_char = 'a' + (rep->keycode[0] - 0x04);
+                    written = snprintf(p, limit - p, "^%c ", ctrl_char);
+                } else if (rep->modifier == 0 && rep->keycode[0] == 0) {
+                    // Release all - use explicit report format
+                    written = snprintf(p, limit - p, "[00:00] ");
+                } else {
+                    const char* key_mnemonic = keycode_to_mnemonic(rep->keycode[0]);
+                    if (rep->modifier == 0 && key_mnemonic) {
+                        written = snprintf(p, limit - p, "%s ", key_mnemonic);
+                    } else {
+                        written = snprintf(p, limit - p, "[%02x:%02x] ", rep->modifier, rep->keycode[0]);
+                    }
+                }
+
+                if (written < 0 || p + written >= limit) {
+                    printf("serialize_macros_from_kvstore: Buffer overflow\n");
+                    free(def);
+                    return false;
+                }
+                p += written;
+                i++;
             }
-            p += written;
         }
 
         // Close the definition

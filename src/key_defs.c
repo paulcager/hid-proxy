@@ -20,8 +20,6 @@ static hid_keyboard_report_t release_all_keys = {0, 0, {0, 0, 0, 0, 0, 0}};
 
 void evaluate_keydef(hid_keyboard_report_t *report, uint8_t key0);
 
-__attribute__((unused)) char keycode_to_letter_or_digit(uint8_t keycode);
-
 void start_define(uint8_t key0);
 
 // next_keydef() is now defined in macros.h
@@ -420,8 +418,18 @@ void print_keydefs() {
 
     printf("DEBUG: Exited loop, closing find context...\n");
     kvs_find_close(&ctx);
-    printf("Total: %d keys\n", count);
+    printf("Total: %d keys\n");
     printf("========================\n\n");
+
+    // Now serialize all keydefs in human-readable format
+    printf("=== Human-Readable Macros ===\n");
+    char output[8192];  // Buffer for serialized output
+    if (serialize_macros_from_kvstore(output, sizeof(output))) {
+        printf("%s", output);
+    } else {
+        printf("Error: Failed to serialize macros\n");
+    }
+    printf("==============================\n\n");
 }
 
 void print_keydef(const keydef_t *def) {
@@ -435,14 +443,4 @@ void print_keydef(const keydef_t *def) {
 
 void print_key_report(const hid_keyboard_report_t *report) {
     printf("[%02x] %02x %02x ...\n", report->modifier, report->keycode[0], report->keycode[1]);
-}
-
-// Quick, dirty and must be replaced!
-char keycode_to_letter_or_digit(uint8_t keycode) {
-    static const char trans_table[] = "....abcdefghijklmnopqrstuvwxyz1234567890";
-    if (keycode > strlen(trans_table)) {
-        return '.';
-    }
-
-    return trans_table[keycode];
 }

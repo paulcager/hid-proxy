@@ -26,6 +26,7 @@ set(TEST_INCLUDES
 # Mock pico SDK types for host testing
 add_library(pico_mocks STATIC
     mocks/pico_mocks.c
+    mocks/keydef_store_mocks.c
 )
 
 target_include_directories(pico_mocks PUBLIC

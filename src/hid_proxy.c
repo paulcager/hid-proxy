@@ -157,9 +157,7 @@ int main(void) {
 
 #ifdef PICO_CYW43_SUPPORTED
     // Initialize WiFi (if configured) - only on Pico W
-    LOG_INFO("Calling wifi_config_init()\n");
     wifi_config_init();
-    LOG_INFO("Calling wifi_init()\n");
     wifi_init();
     LOG_INFO("WiFi initialization complete\n");
 #else

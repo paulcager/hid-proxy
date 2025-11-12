@@ -177,7 +177,7 @@ If you have a Pico W, use the WiFi/HTTP interface for easier macro editing. See 
 2. Press **both shift keys + SPACE** on your keyboard to enable web access (5 minutes)
 3. Download macros: `curl http://hidproxy-XXXX.local/macros.txt > macros.txt` (replace XXXX with your board ID)
 4. Edit the file in your favorite text editor
-5. Upload changes: `curl -X POST http://hidproxy-XXXX.local/macros.txt --data-binary @macros.txt`
+5. Upload changes: `curl -X POST http://hidproxy-XXXX.local/macros.txt `--data-binary @macros.txt
 
 **Note:** The mDNS hostname includes the last 4 digits of your board's unique ID (e.g., `hidproxy-a1b2.local`). Check your serial console output for the exact hostname.
 
