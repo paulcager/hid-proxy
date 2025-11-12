@@ -654,6 +654,9 @@ bool serialize_macros_from_kvstore(char* output_buffer, size_t buffer_size) {
         p += written;
 
         // Serialize reports - simplified version (just output raw for now)
+        // TODO: Detect sequences of printable characters and output as quoted strings
+        // e.g., "hello" instead of H E L L O
+        // See old serialize_macros() (lines 701-805 before removal) in git history for reference
         for (int i = 0; i < def->count; i++) {
             const hid_keyboard_report_t* rep = &def->reports[i];
 
@@ -695,6 +698,13 @@ bool serialize_macros_from_kvstore(char* output_buffer, size_t buffer_size) {
     }
 
     return true;
+}
+
+// Helper for old store_t-based functions (deprecated)
+static inline keydef_t *next_keydef(const keydef_t *this) {
+    const void *t = this;
+    t += sizeof(keydef_t) + (this->count * sizeof(hid_keyboard_report_t));
+    return (keydef_t*)t;
 }
 
 // Old store_t-based version (deprecated)

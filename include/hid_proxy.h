@@ -118,9 +118,10 @@ extern queue_t keyboard_to_tud_queue;
 extern queue_t tud_to_physical_host_queue;
 extern queue_t leds_queue;
 
-// Synchronization flag: Core 1 waits for this before starting USB host stack
-// This prevents flash access conflicts during kvstore initialization
-extern volatile bool kvstore_init_complete;
+// LED control for visual status feedback (asymmetric on/off times)
+extern uint32_t led_on_interval_ms;   // How long LED stays on (ms)
+extern uint32_t led_off_interval_ms;  // How long LED stays off (ms)
+extern void update_status_led(void);
 
 extern void init_state(kb_t *kb);
 
@@ -156,14 +157,5 @@ inline void add_to_host_queue(uint8_t instance, uint8_t report_id, uint16_t len,
     memcpy(item.data, data, sizeof(item.data));
     queue_add_or_panic(&tud_to_physical_host_queue, &item);
 }
-
-#ifdef NDEBUG
-# define assert_sane(__kb) ((void)0)
-#else
-# define assert_sane(__kb) assert_sane_func(__FILE__, __LINE__, __kb)
-
-void assert_sane_func(char *file, int line, kb_t *k);
-
-#endif
 
 #endif //HID_PROXY_HID_PROXY_H

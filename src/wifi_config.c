@@ -48,7 +48,7 @@ void wifi_config_init(void) {
         #ifdef WIFI_COUNTRY_CODE
         strncpy(current_config.country, WIFI_COUNTRY_CODE, sizeof(current_config.country) - 1);
         #else
-        strncpy(current_config.country, "US", sizeof(current_config.country) - 1);
+        strncpy(current_config.country, "UK", sizeof(current_config.country) - 1);
         #endif
         current_config.enable_wifi = true;
 
@@ -107,7 +107,7 @@ void wifi_config_load(wifi_config_t *config) {
     ret = kvstore_get_value(WIFI_COUNTRY_KEY, config->country, sizeof(config->country), &size, NULL);
     if (ret != 0) {
         // Default to US
-        strncpy(config->country, "US", sizeof(config->country) - 1);
+        strncpy(config->country, "UK", sizeof(config->country) - 1);
     } else {
         // Ensure null-terminated
         config->country[sizeof(config->country) - 1] = '\0';

@@ -64,6 +64,8 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 case HID_KEY_INSERT:
                     // Set first password
                     kb.status = entering_new_password;
+                    led_on_interval_ms = 50;   // Fast flash during password entry
+                    led_off_interval_ms = 50;
                     enc_clear_password();
                     printf("Enter new password\n");
                     return;
@@ -107,6 +109,8 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
 
                 case HID_KEY_ENTER:
                     kb.status = entering_password;
+                    led_on_interval_ms = 50;   // Fast flash during password entry
+                    led_off_interval_ms = 50;
                     enc_clear_password();
                     printf("Enter password\n");
                     return;
@@ -114,6 +118,8 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 case HID_KEY_INSERT:
                     // Change password while locked (will re-encrypt)
                     kb.status = entering_new_password;
+                    led_on_interval_ms = 50;   // Fast flash during password entry
+                    led_off_interval_ms = 50;
                     enc_clear_password();
                     printf("Enter new password\n");
                     return;
@@ -152,10 +158,14 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     // Wrong password
                     printf("Incorrect password\n");
                     kb.status = locked;
+                    led_on_interval_ms = 0;   // LED off when locked
+                    led_off_interval_ms = 0;
                     enc_clear_key();
                 } else if (kb.status == entering_password) {
                     // Unlocking - no need to re-save anything
                     kb.status = normal;
+                    led_on_interval_ms = 100;    // Slow pulse when unlocked
+                    led_off_interval_ms = 2400;
                     printf("Unlocked\n");
                 } else {
                     // Changing/setting password
@@ -163,6 +173,8 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     // (i.e., this is a password change, not first-time setup)
                     printf("Password set successfully\n");
                     kb.status = normal;
+                    led_on_interval_ms = 100;    // Slow pulse when unlocked
+                    led_off_interval_ms = 2400;
 
                     // TODO: Add password change support later
                     // For now, password can only be set once on blank device
@@ -175,6 +187,8 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
         case normal:
             if (kb_report->modifier == 0x22 && key0 == 0) {
                 kb.status = seen_magic;
+                led_on_interval_ms = 50;   // Fast flash during command mode
+                led_off_interval_ms = 50;
             } else {
                 LOG_TRACE("Adding to host Q: instance=%d, report_id=%d, len=%d\n", 0, REPORT_ID_KEYBOARD, sizeof(hid_keyboard_report_t));
                 add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
@@ -185,6 +199,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
         case seen_magic:
             if (kb_report->modifier == 0x00 && key0 == 0) {
                 kb.status = expecting_command;
+                // Keep fast flash (already set to 100ms)
             }
             return;
 
@@ -211,6 +226,8 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
 
                 case HID_KEY_ESCAPE:
                     kb.status = normal;
+                    led_on_interval_ms = 100;    // Back to slow pulse
+                    led_off_interval_ms = 2400;
                     return;
 
                 case HID_KEY_EQUAL:
@@ -240,11 +257,13 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     return;
 
                 case HID_KEY_END:
-                    lock();
+                    lock();  // Sets LED to off (0ms) internally
                     return;
 
                 default:
                     kb.status = normal;
+                    led_on_interval_ms = 100;    // Back to slow pulse
+                    led_off_interval_ms = 2400;
                     evaluate_keydef(kb_report, key0);
                     return;
             }
@@ -275,6 +294,8 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 }
 
                 kb.status = normal;
+                led_on_interval_ms = 100;    // Back to slow pulse after defining
+                led_off_interval_ms = 2400;
                 return;
             }
 
@@ -310,6 +331,8 @@ void start_define(uint8_t key0) {
     kb.key_being_defined->count = 0;  // No reports recorded yet
 
     kb.status = defining;
+    led_on_interval_ms = 50;   // Fast flash during definition
+    led_off_interval_ms = 50;
     LOG_INFO("Defining keycode %d\n", key0);
     LOG_DEBUG("New def for %x is at %p\n", key0, kb.key_being_defined);
 }

@@ -49,7 +49,7 @@ bool keydef_delete(uint8_t trigger);
  * \param max_count Maximum number of entries in buffer
  * \return Number of keydefs found (may be less than max_count)
  */
-int keydef_list(uint8_t *triggers, size_t max_count);
+size_t keydef_list(uint8_t *triggers, size_t max_count);
 
 /*! \brief Get the size of a keydef in bytes
  *

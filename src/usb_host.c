@@ -34,8 +34,7 @@ void core1_main() {
     flash_safe_execute_core_init();
     LOG_INFO("Core 1: flash_safe_execute_core_init() complete\n");
 
-    // Note: kvstore is already initialized on Core 0 before we launch
-    // The kvstore_init_complete flag should already be set
+    // Note: kvstore is already initialized on Core 0 before Core 1 launches
     LOG_INFO("Core 1: Starting USB host stack\n");
 
     // Use tuh_configure() to pass pio configuration to the host stack

@@ -137,17 +137,17 @@ To access special functions:
 
 ### Command Reference
 
-| Key      | Description                                                                                                                                                |
-|----------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Key      | Description                                                                                                                                                          |
+|----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `ENTER`  | **When locked:** Start passphrase entry to unlock encrypted key definitions. Type your passphrase, then press `ENTER` again to submit. Wrong passwords are rejected. |
-| `INSERT` | **When unlocked:** Change passphrase. **Note:** Password change re-encryption not yet implemented - must erase device to change password.                  |
-| `ESC`    | Cancel the current operation (e.g., exit passphrase entry or key definition mode).                                                                         |
-| `DEL`    | **Erase everything** - immediately deletes encryption key and all key definitions from flash. No confirmation prompt. Cannot be undone!                    |
-| `END`    | Lock device and clear decrypted key definitions from memory. Encrypted data in flash is preserved. Re-enter passphrase (double-shift + `ENTER`) to unlock. |
-| `=`      | Start defining/redefining a key. Next keystroke is the trigger key, following keystrokes are the expansion. End with another double-shift.                 |
-| `SPACE`  | Print all current key definitions to serial console (debug output) and enable macros.txt  Useful for viewing configured macros via UART.                   |
-| `PRINT`  | Write the current encryption key to an NFC tag (requires PN532 reader and Mifare Classic tag).                                                             |
-| `HOME`   | *While holding both shifts:* Reboot into bootloader mode ``for flashing new firmware.                                                                      |
+| `INSERT` | **When unlocked:** Change passphrase. **Note:** Password change re-encryption not yet implemented - must erase device to change password.                            |
+| `ESC`    | Cancel the current operation (e.g., exit passphrase entry or key definition mode).                                                                                   |
+| `DEL`    | **Erase everything** - immediately deletes encryption key and all key definitions from flash. No confirmation prompt. Cannot be undone!                              |
+| `END`    | Lock device and clear decrypted key definitions from memory. Encrypted data in flash is preserved. Re-enter passphrase (double-shift + `ENTER`) to unlock.           |
+| `=`      | Start defining/redefining a key. Next keystroke is the trigger key, following keystrokes are the expansion. End with another double-shift.                           |
+| `SPACE`  | Print all current key definitions to serial console (debug output) and enable macros.txt  Useful for viewing configured macros via UART.                             |
+| `PRINT`  | Write the current encryption key to an NFC tag (requires PN532 reader and Mifare Classic tag).                                                                       |
+| `HOME`   | *While holding both shifts:* Reboot into bootloader mode ``for flashing new firmware.                                                                                |
 
 ### First-Time Setup
 

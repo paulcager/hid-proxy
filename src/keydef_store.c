@@ -153,10 +153,10 @@ bool keydef_delete(uint8_t trigger) {
     return true;
 }
 
-int keydef_list(uint8_t *triggers, size_t max_count) {
+size_t keydef_list(uint8_t *triggers, size_t max_count) {
     kvs_find_t ctx;
     char key[32];
-    int count = 0;
+    size_t count = 0;
 
     int ret = kvs_find(KEYDEF_PREFIX, &ctx);
     if (ret != 0) {

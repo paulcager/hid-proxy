@@ -61,7 +61,6 @@ add_executable(hid_proxy
         src/key_defs.c
         src/encryption.c
         src/pbkdf-lite.c
-        src/sane.c
         src/macros.c
         src/usb_host.c
         src/usb_descriptors.c

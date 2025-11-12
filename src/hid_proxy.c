@@ -79,8 +79,30 @@ queue_t tud_to_physical_host_queue;
 // A queue of events from the physical host, to be sent to the physical keyboard.
 queue_t leds_queue;
 
-// Synchronization flag: Core 1 waits for this before starting USB host stack
-volatile bool kvstore_init_complete = false;
+// LED control for visual status feedback (Num Lock)
+static uint8_t current_led_state = 0;       // Current LED state to send to keyboard
+static absolute_time_t next_led_toggle;     // When to toggle LED next
+uint32_t led_on_interval_ms = 0;            // How long LED stays on (ms)
+uint32_t led_off_interval_ms = 0;           // How long LED stays off (ms)
+
+/*------------- LED Status Feedback -------------*/
+
+void update_status_led(void) {
+    if (led_on_interval_ms == 0 && led_off_interval_ms == 0) {
+        // LED off (locked/blank state)
+        current_led_state = 0;
+    } else if (time_reached(next_led_toggle)) {
+        // Toggle Num Lock LED (bit 0)
+        current_led_state ^= 0x01;
+
+        // Use different interval based on new state
+        uint32_t next_interval = (current_led_state & 0x01) ? led_on_interval_ms : led_off_interval_ms;
+        next_led_toggle = make_timeout_time_ms(next_interval);
+    }
+
+    // Send to physical keyboard (non-blocking)
+    queue_try_add(&leds_queue, &current_led_state);
+}
 
 /*------------- MAIN -------------*/
 
@@ -133,10 +155,6 @@ int main(void) {
     multicore_launch_core1(core1_main);
     LOG_INFO("Core 1 launched\n");
 
-    // Signal Core 1 that initialization is complete (it can start immediately)
-    kvstore_init_complete = true;
-    LOG_INFO("kvstore_init_complete flag set\n");
-
 #ifdef PICO_CYW43_SUPPORTED
     // Initialize WiFi (if configured) - only on Pico W
     LOG_INFO("Calling wifi_config_init()\n");
@@ -164,6 +182,7 @@ int main(void) {
 
         tud_task(); // tinyusb device task
         tud_cdc_write_flush();
+        update_status_led();  // Update LED status feedback
 #ifdef ENABLE_NFC
         nfc_task(kb.status == locked);
 #endif
@@ -306,6 +325,8 @@ void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report, uint16_
 
 void lock() {
     kb.status = locked;
+    led_on_interval_ms = 0;   // LED off when locked
+    led_off_interval_ms = 0;
     kvstore_clear_encryption_key();  // Clear encryption key from memory
     enc_clear_key();  // Also clear the key in encryption.c
 }

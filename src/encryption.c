@@ -61,19 +61,3 @@ void enc_clear_key() {
     memset(key, 0, sizeof key);
     enc_clear_password();
 }
-
-// OBSOLETE: store_encrypt() is no longer needed with kvstore migration
-// kvstore handles encryption automatically via mbedtls
-bool store_encrypt(kb_t *kb) {
-    LOG_INFO("store_encrypt() is obsolete with kvstore migration\n");
-    (void)kb;
-    return true;
-}
-
-// OBSOLETE: store_decrypt() is no longer needed with kvstore migration
-// kvstore handles decryption automatically via mbedtls
-bool store_decrypt(kb_t *kb) {
-    LOG_INFO("store_decrypt() is obsolete with kvstore migration\n");
-    (void)kb;
-    return true;
-}
