@@ -5,6 +5,9 @@
 #include "usb_descriptors.h"
 #include "encryption.h"
 #include "macros.h"
+#include "keydef_store.h"
+#include "kvstore_init.h"
+#include "kvstore.h"
 #ifdef ENABLE_NFC
 #include "nfc_tag.h"
 #endif
@@ -16,8 +19,6 @@
 static hid_keyboard_report_t release_all_keys = {0, 0, {0, 0, 0, 0, 0, 0}};
 
 void evaluate_keydef(hid_keyboard_report_t *report, uint8_t key0);
-
-__attribute__((unused)) char keycode_to_letter_or_digit(uint8_t keycode);
 
 void start_define(uint8_t key0);
 
@@ -61,6 +62,8 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 case HID_KEY_INSERT:
                     // Set first password
                     kb.status = entering_new_password;
+                    led_on_interval_ms = 50;   // Fast flash during password entry
+                    led_off_interval_ms = 50;
                     enc_clear_password();
                     printf("Enter new password\n");
                     return;
@@ -87,6 +90,13 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
             return;
 
         case locked_seen_magic:
+            // Wait for all keys to be released before accepting commands
+            if (kb_report->modifier == 0x00 && key0 == 0) {
+                kb.status = locked_expecting_command;
+            }
+            return;
+
+        case locked_expecting_command:
             switch (key0) {
                 case 0:
                     return;
@@ -97,6 +107,8 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
 
                 case HID_KEY_ENTER:
                     kb.status = entering_password;
+                    led_on_interval_ms = 50;   // Fast flash during password entry
+                    led_off_interval_ms = 50;
                     enc_clear_password();
                     printf("Enter password\n");
                     return;
@@ -104,6 +116,8 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 case HID_KEY_INSERT:
                     // Change password while locked (will re-encrypt)
                     kb.status = entering_new_password;
+                    led_on_interval_ms = 50;   // Fast flash during password entry
+                    led_off_interval_ms = 50;
                     enc_clear_password();
                     printf("Enter new password\n");
                     return;
@@ -114,8 +128,10 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     return;
 
                 default:
+                    // Try to evaluate public keydefs even when locked
+                    // evaluate_keydef() will only succeed for public (unencrypted) keydefs
                     kb.status = locked;
-                    add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
+                    evaluate_keydef(kb_report, key0);
                     return;
             }
 
@@ -130,12 +146,37 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 enc_add_password_byte(key0);
             } else {
                 enc_derive_key_from_password();
-                if (kb.status == entering_password) {
-                    read_state(&kb);
-                } else {
-                    // Changing password.
-                    save_state(&kb);
+
+                // Update kvstore encryption key
+                uint8_t key[16];
+                enc_get_key(key, sizeof(key));
+                bool password_ok = kvstore_set_encryption_key(key);
+
+                if (!password_ok) {
+                    // Wrong password
+                    printf("Incorrect password\n");
+                    kb.status = locked;
+                    led_on_interval_ms = 0;   // LED off when locked
+                    led_off_interval_ms = 0;
+                    enc_clear_key();
+                } else if (kb.status == entering_password) {
+                    // Unlocking - no need to re-save anything
                     kb.status = normal;
+                    led_on_interval_ms = 100;    // Slow pulse when unlocked
+                    led_off_interval_ms = 2400;
+                    printf("Unlocked\n");
+                } else {
+                    // Changing/setting password
+                    // Only re-encrypt if there are keydefs AND we can read them
+                    // (i.e., this is a password change, not first-time setup)
+                    printf("Password set successfully\n");
+                    kb.status = normal;
+                    led_on_interval_ms = 100;    // Slow pulse when unlocked
+                    led_off_interval_ms = 2400;
+
+                    // TODO: Add password change support later
+                    // For now, password can only be set once on blank device
+                    // To change password, user must erase device (double-shift DEL) and start over
                 }
             }
 
@@ -144,6 +185,8 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
         case normal:
             if (kb_report->modifier == 0x22 && key0 == 0) {
                 kb.status = seen_magic;
+                led_on_interval_ms = 50;   // Fast flash during command mode
+                led_off_interval_ms = 50;
             } else {
                 LOG_TRACE("Adding to host Q: instance=%d, report_id=%d, len=%d\n", 0, REPORT_ID_KEYBOARD, sizeof(hid_keyboard_report_t));
                 add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
@@ -154,6 +197,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
         case seen_magic:
             if (kb_report->modifier == 0x00 && key0 == 0) {
                 kb.status = expecting_command;
+                // Keep fast flash (already set to 100ms)
             }
             return;
 
@@ -180,6 +224,8 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
 
                 case HID_KEY_ESCAPE:
                     kb.status = normal;
+                    led_on_interval_ms = 100;    // Back to slow pulse
+                    led_off_interval_ms = 2400;
                     return;
 
                 case HID_KEY_EQUAL:
@@ -189,7 +235,9 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 case HID_KEY_SPACE:
                     kb.status = normal;
                     print_keydefs();
+#ifdef PICO_CYW43_SUPPORTED
                     web_access_enable();
+#endif
                     return;
 
                 case HID_KEY_ENTER:
@@ -209,11 +257,13 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     return;
 
                 case HID_KEY_END:
-                    lock();
+                    lock();  // Sets LED to off (0ms) internally
                     return;
 
                 default:
                     kb.status = normal;
+                    led_on_interval_ms = 100;    // Back to slow pulse
+                    led_off_interval_ms = 2400;
                     evaluate_keydef(kb_report, key0);
                     return;
             }
@@ -230,32 +280,37 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
         case defining:
             if (kb_report->modifier == 0x22 && key0 == 0) {
                 LOG_INFO("End of definition: about to save\n");
-                save_state(&kb);
-                LOG_INFO("Setn status = normal\n");
+
+                // Save the keydef to kvstore
+                if (kb.key_being_defined != NULL) {
+                    if (keydef_save(kb.key_being_defined)) {
+                        LOG_INFO("Saved keydef 0x%02x with %d reports\n",
+                                kb.key_being_defined->trigger, kb.key_being_defined->count);
+                    } else {
+                        LOG_ERROR("Failed to save keydef 0x%02x\n", kb.key_being_defined->trigger);
+                    }
+                    free(kb.key_being_defined);
+                    kb.key_being_defined = NULL;
+                }
+
                 kb.status = normal;
-                kb.key_being_defined = NULL;
+                led_on_interval_ms = 100;    // Back to slow pulse after defining
+                led_off_interval_ms = 2400;
                 return;
             }
 
             keydef_t *this_def = kb.key_being_defined;
 
-            // Check remaining space to prevent buffer overflow
-            size_t start_of_this_def_addr = (size_t)this_def;
-            size_t end_of_flash_store_addr = (size_t)kb.local_store + FLASH_STORE_SIZE;
-            size_t space_remaining_from_this_def = end_of_flash_store_addr - start_of_this_def_addr;
-
-            size_t max_reports = 0;
-            if (space_remaining_from_this_def > sizeof(keydef_t)) {
-                max_reports = (space_remaining_from_this_def - sizeof(keydef_t)) / sizeof(hid_keyboard_report_t);
-            }
-
-            if (this_def->used >= max_reports) {
-                LOG_ERROR("Buffer overflow prevented: Max reports (%zu) for keydef (keycode %02x) reached. Ignoring report.\n", max_reports, this_def->keycode);
+            // Check if we have space in the allocated buffer
+            // The buffer was allocated with initial capacity, check if we need to grow it
+            if (this_def->count >= 64) {
+                LOG_ERROR("Maximum macro length reached (%d reports) for keycode %02x. Ignoring report.\n",
+                         this_def->count, this_def->trigger);
                 return; // Ignore the report to prevent overflow
             }
 
-            this_def->reports[this_def->used] = *kb_report;
-            this_def->used++;
+            this_def->reports[this_def->count] = *kb_report;
+            this_def->count++;
             print_keydef(this_def);
     }
 }
@@ -263,99 +318,125 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
 void start_define(uint8_t key0) {
     LOG_INFO("Defining keycode %02x\n", key0);
 
-    kb.key_being_defined = NULL;
+    // Delete any existing definition for this keycode
+    keydef_delete(key0);
 
-    void *ptr = kb.local_store->keydefs;
-    void *limit = (void*)kb.local_store + FLASH_STORE_SIZE;
-
-    while(true) {
-        keydef_t *def = ptr;
-        if (ptr >= limit) {
-            break;
-        }
-
-        if (def->keycode == 0) {
-            // We've found the end of the list.
-            kb.key_being_defined = def;
-            break;
-        }
-
-        void *next = ptr + sizeof(keydef_t) + (def->used * sizeof(hid_keyboard_report_t));
-
-        if (def->keycode == key0) {
-            // We are replacing a definition. Shuffle down the buffer.
-            if (next < limit) {
-                memmove(ptr, next, limit - next);
-                continue;
-            } else {
-                // This keydef is corrupt and extends beyond the store.
-                // We can't memmove, so just overwrite it in place.
-                kb.key_being_defined = def;
-                break;
-            }
-        }
-
-        ptr = next;
-    }
-
+    // Allocate a temporary keydef for recording (start with space for 64 reports)
+    // We'll grow this as needed during recording
+    kb.key_being_defined = keydef_alloc(key0, 64);
     if (kb.key_being_defined == NULL) {
-        panic("No space left");
+        panic("Failed to allocate keydef");
     }
 
-    kb.key_being_defined->keycode = key0;
-    kb.key_being_defined->used = 0;
-
-    // If def already existed, delete it.
+    kb.key_being_defined->count = 0;  // No reports recorded yet
 
     kb.status = defining;
+    led_on_interval_ms = 50;   // Fast flash during definition
+    led_off_interval_ms = 50;
     LOG_INFO("Defining keycode %d\n", key0);
     LOG_DEBUG("New def for %x is at %p\n", key0, kb.key_being_defined);
 }
 
 void evaluate_keydef(hid_keyboard_report_t *report, uint8_t key0) {
-    keydef_t *def = NULL;
-    for (keydef_t *ptr = kb.local_store->keydefs; ptr->keycode != 0; ptr = next_keydef(ptr)) {
-        if (ptr->keycode == key0) {
-            def = ptr;
-            break;
-        }
-    }
+    // Load keydef from kvstore on-demand
+    printf("evaluate_keydef: Looking for keydef 0x%02X, device %s\n",
+           key0, kvstore_is_unlocked() ? "UNLOCKED" : "LOCKED");
+
+    keydef_t *def = keydef_load(key0);
 
     if (def == NULL) {
-        LOG_INFO("No sequence defined for keycode %x\n", key0);
+        printf("evaluate_keydef: No sequence defined for keycode 0x%02X\n", key0);
         add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), report);
         add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t),&release_all_keys);
         return;
     }
 
-    LOG_INFO("Executing keycode %x with %d sequences\n", key0, def->used);
+    printf("evaluate_keydef: Executing keycode 0x%02X with %d sequences (%s)\n",
+           key0, def->count, def->require_unlock ? "PRIVATE" : "PUBLIC");
 
-    // TODO
+    // Send the macro sequence
     add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t),&release_all_keys);
-    for (int i = 0; i < def->used; i++) {
+    for (int i = 0; i < def->count; i++) {
         hid_keyboard_report_t next_report = def->reports[i];
         LOG_TRACE("> %x %x\n", next_report.modifier, next_report.keycode[0]);
         add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t),&next_report);
     }
+
+    // Free the loaded keydef
+    free(def);
 }
 
 
 void print_keydefs() {
-    // Use static buffer to avoid heap allocation failures on memory-constrained device
-    // This is separate from the HTTP server's buffer and only used for serial console output
-    static char output_buffer[FLASH_SECTOR_SIZE];
+    // Simple version: just list keys stored in kvstore without loading/printing values
+    // This avoids potential crashes from malformed keydefs
 
-    // Serialize keydefs to macro text format
-    if (serialize_macros(kb.local_store, output_buffer, sizeof(output_buffer))) {
-        printf("%s", output_buffer);
+    printf("\n=== KVStore Contents ===\n");
+    printf("DEBUG: About to call kvs_find...\n");
+
+    kvs_find_t ctx;
+    char key[64];
+    int ret = kvs_find("", &ctx);  // Find all keys
+
+    printf("DEBUG: kvs_find returned %d (%s)\n", ret, ret == 0 ? "SUCCESS" : kvs_strerror(ret));
+
+    if (ret != 0) {
+        printf("Error listing kvstore: %s\n", kvs_strerror(ret));
+        return;
+    }
+
+    int count = 0;
+    printf("DEBUG: Starting kvs_find_next loop...\n");
+    while (kvs_find_next(&ctx, key, sizeof(key)) == 0) {
+        printf("DEBUG: Found key '%s'\n", key);
+
+        // For keydefs, try to parse and show info
+        if (strncmp(key, "keydef.", 7) == 0) {
+            // Load the keydef to get accurate info
+            unsigned int trigger;
+            if (sscanf(key, "keydef.0x%X", &trigger) == 1) {
+                keydef_t *def = keydef_load((uint8_t)trigger);
+                if (def != NULL) {
+                    printf("  %s: %u reports (%s)\n", key, def->count,
+                           def->require_unlock ? "PRIVATE/ENCRYPTED" : "PUBLIC/UNENCRYPTED");
+                    free(def);
+                } else {
+                    printf("  %s: (failed to load)\n", key);
+                }
+            } else {
+                printf("  %s: (invalid key format)\n", key);
+            }
+        } else {
+            // For non-keydef keys, just show they exist
+            printf("  %s\n", key);
+        }
+        count++;
+
+        if (count > 100) {
+            printf("DEBUG: Safety break - too many keys!\n");
+            break;
+        }
+    }
+
+    printf("DEBUG: Exited loop, closing find context...\n");
+    kvs_find_close(&ctx);
+    printf("Total: %d keys\n");
+    printf("========================\n\n");
+
+    // Now serialize all keydefs in human-readable format
+    printf("=== Human-Readable Macros ===\n");
+    char output[8192];  // Buffer for serialized output
+    if (serialize_macros_from_kvstore(output, sizeof(output))) {
+        printf("%s", output);
     } else {
         printf("Error: Failed to serialize macros\n");
     }
+    printf("==============================\n\n");
 }
 
 void print_keydef(const keydef_t *def) {
-    printf("%02x @%p: used = %d\n", def->keycode, def, def->used);
-    for (int i = 0; i < def->used; i++) {
+    printf("%02x @%p: count = %d\n", def->trigger, def, def->count);
+    for (int i = 0; i < def->count; i++) {
         printf("> %3d ", i);
         print_key_report(&(def->reports[i]));
     }
@@ -364,14 +445,4 @@ void print_keydef(const keydef_t *def) {
 
 void print_key_report(const hid_keyboard_report_t *report) {
     printf("[%02x] %02x %02x ...\n", report->modifier, report->keycode[0], report->keycode[1]);
-}
-
-// Quick, dirty and must be replaced!
-char keycode_to_letter_or_digit(uint8_t keycode) {
-    static const char trans_table[] = "....abcdefghijklmnopqrstuvwxyz1234567890";
-    if (keycode > strlen(trans_table)) {
-        return '.';
-    }
-
-    return trans_table[keycode];
 }

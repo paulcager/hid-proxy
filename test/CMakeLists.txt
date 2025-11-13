@@ -26,6 +26,7 @@ set(TEST_INCLUDES
 # Mock pico SDK types for host testing
 add_library(pico_mocks STATIC
     mocks/pico_mocks.c
+    mocks/keydef_store_mocks.c
 )
 
 target_include_directories(pico_mocks PUBLIC
@@ -54,6 +55,24 @@ target_link_libraries(test_macros
 
 # Add test to CTest
 add_test(NAME test_macros COMMAND test_macros)
+
+# Test: Macros helper functions
+add_executable(test_macros_helpers
+    test_macros_helpers.c
+)
+
+target_include_directories(test_macros_helpers PRIVATE
+    ${TEST_INCLUDES}
+    mocks
+)
+
+target_link_libraries(test_macros_helpers
+    unity
+    pico_mocks
+)
+
+# Add test to CTest
+add_test(NAME test_macros_helpers COMMAND test_macros_helpers)
 
 # Make sure test runs from the correct directory
 set_tests_properties(test_macros PROPERTIES

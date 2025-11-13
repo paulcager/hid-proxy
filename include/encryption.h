@@ -17,8 +17,4 @@ void enc_derive_key_from_password();
 
 void enc_clear_key();
 
-bool store_encrypt(kb_t *kb);
-
-bool store_decrypt(kb_t *kb);
-
 #endif //HID_PROXY_ENCRYPTION_H

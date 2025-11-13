@@ -7,15 +7,17 @@ A USB HID keyboard proxy for Raspberry Pi Pico (or Pico W) that intercepts and p
 **Core features (Pico and Pico W):**
 - **Pass-through mode**: Keystrokes normally pass directly from physical keyboard to host
 - **Text expansion**: Define single keystrokes that expand to sequences (macros)
-- **Encrypted storage**: Key definitions stored encrypted in flash memory
-- **Passphrase unlock**: Decrypt key definitions with password
+- **Encrypted storage**: Key definitions stored in flash using pico-kvstore with AES-128-GCM encryption
+- **Public/Private keydefs**: Public macros work when locked; private macros require unlock
+- **On-demand loading**: Reduced memory usage - keydefs loaded from flash as needed
+- **Passphrase unlock**: Decrypt private key definitions with password (PBKDF2 key derivation)
 - **NFC authentication**: *Optional, disabled by default.* Store/read encryption keys from NFC tags (enable with `--nfc` build flag)
 - **Auto-lock**: Automatically locks after 120 minutes of inactivity
 
 **Pico W exclusive features:**
 - **WiFi/HTTP configuration**: Edit macros via HTTP API without USB re-enumeration
 - **Physical web unlock**: Both-shifts+SPACE enables 5-minute web access window
-- **mDNS support**: Access device at `hidproxy.local`
+- **mDNS support**: Access device at `hidproxy-XXXX.local` (XXXX = last 4 digits of board ID)
 
 ## Hardware Requirements
 
@@ -61,7 +63,7 @@ Communication between cores uses lock-free queues for HID reports and LED status
 ### Prerequisites
 
 1. **Pico SDK** installed (update path in CMakeLists.txt if not at `/home/paul/pico/pico-sdk`)
-2. **Git submodules** (TinyUSB, Pico-PIO-USB, tiny-AES-c, tinycrypt)
+2. **Git submodules** (TinyUSB, Pico-PIO-USB, pico-kvstore, tiny-AES-c, tinycrypt)
 3. **CMake** and **gcc-arm-none-eabi** toolchain
 
 ### Build Steps
@@ -135,31 +137,35 @@ To access special functions:
 
 ### Command Reference
 
-| Key      | Description                                                                                                                                                |
-|----------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `ENTER`  | **When locked:** Start passphrase entry to unlock encrypted key definitions. Type your passphrase, then press `ENTER` again to submit.                     |
-| `INSERT` | **When unlocked:** Change passphrase and re-encrypt key definitions. Type new passphrase, then press `ENTER` to save.                                      |
-| `ESC`    | Cancel the current operation (e.g., exit passphrase entry or key definition mode).                                                                         |
-| `DEL`    | **Erase everything** - immediately deletes encryption key and all key definitions from flash. No confirmation prompt. Cannot be undone!                    |
-| `END`    | Lock device and clear decrypted key definitions from memory. Encrypted data in flash is preserved. Re-enter passphrase (double-shift + `ENTER`) to unlock. |
-| `=`      | Start defining/redefining a key. Next keystroke is the trigger key, following keystrokes are the expansion. End with another double-shift.                 |
-| `SPACE`  | Print all current key definitions to serial console (debug output) and enable macros.txt  Useful for viewing configured macros via UART.                   |
-| `PRINT`  | Write the current encryption key to an NFC tag (requires PN532 reader and Mifare Classic tag).                                                             |
-| `HOME`   | *While holding both shifts:* Reboot into bootloader mode ``for flashing new firmware.                                                                      |
+| Key      | Description                                                                                                                                                          |
+|----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `ENTER`  | **When locked:** Start passphrase entry to unlock encrypted key definitions. Type your passphrase, then press `ENTER` again to submit. Wrong passwords are rejected. |
+| `INSERT` | **When unlocked:** Change passphrase. **Note:** Password change re-encryption not yet implemented - must erase device to change password.                            |
+| `ESC`    | Cancel the current operation (e.g., exit passphrase entry or key definition mode).                                                                                   |
+| `DEL`    | **Erase everything** - immediately deletes encryption key and all key definitions from flash. No confirmation prompt. Cannot be undone!                              |
+| `END`    | Lock device and clear decrypted key definitions from memory. Encrypted data in flash is preserved. Re-enter passphrase (double-shift + `ENTER`) to unlock.           |
+| `=`      | Start defining/redefining a key. Next keystroke is the trigger key, following keystrokes are the expansion. End with another double-shift.                           |
+| `SPACE`  | Print all current key definitions to serial console (debug output) and enable macros.txt  Useful for viewing configured macros via UART.                             |
+| `PRINT`  | Write the current encryption key to an NFC tag (requires PN532 reader and Mifare Classic tag).                                                                       |
+| `HOME`   | *While holding both shifts:* Reboot into bootloader mode ``for flashing new firmware.                                                                                |
 
 ### First-Time Setup
 
-A freshly flashed device starts in the **unlocked** state with no passphrase or key definitions.
+A freshly flashed device starts in the **blank** state with no passphrase or key definitions.
 
 To set up encryption:
 1. **Double-shift** + `INSERT` to start setting a passphrase
 2. Type your desired passphrase (letters, numbers, symbols - any keys on your keyboard)
 3. Press `ENTER` to save
-4. The passphrase is used to derive an encryption key that protects your key definitions in flash
+4. The passphrase is used to derive an encryption key (via PBKDF2-SHA256) that protects your private key definitions in flash
+5. A SHA256 hash of the encryption key is stored for password validation on subsequent unlocks
 
 **Important:**
 - Passphrases support any keyboard characters (keycodes only, not multi-byte Unicode)
-- If you enter the wrong passphrase when unlocking, the device stays locked with no visible feedback (check serial debug output for errors)
+- Private keydefs (default) require unlock to access
+- Public keydefs work even when locked (useful for non-sensitive macros)
+- **Password validation works:** Wrong passwords are rejected, keeping encryption key out of memory
+- **Password change not implemented:** To change password, you must erase device (double-shift + DEL) and start over
 - There's no password recovery - if you forget it, use double-shift + `DEL` to erase and start over
 
 ### Editing Macros via HTTP API (Pico W Only)
@@ -169,9 +175,11 @@ If you have a Pico W, use the WiFi/HTTP interface for easier macro editing. See 
 **Quick start:**
 1. Configure WiFi (see WIFI_SETUP.md for initial setup)
 2. Press **both shift keys + SPACE** on your keyboard to enable web access (5 minutes)
-3. Download macros: `curl http://hidproxy.local/macros.txt > macros.txt`
+3. Download macros: `curl http://hidproxy-XXXX.local/macros.txt > macros.txt` (replace XXXX with your board ID)
 4. Edit the file in your favorite text editor
-5. Upload changes: `curl -X POST http://hidproxy.local/macros.txt --data-binary @macros.txt`
+5. Upload changes: `curl -X POST http://hidproxy-XXXX.local/macros.txt `--data-binary @macros.txt
+
+**Note:** The mDNS hostname includes the last 4 digits of your board's unique ID (e.g., `hidproxy-a1b2.local`). Check your serial console output for the exact hostname.
 
 **Advantages:**
 - No USB re-enumeration (keyboard stays functional)
@@ -368,21 +376,26 @@ To change the amount of flash memory reserved for storing key definitions, you o
 ## Known Issues
 
 See **BUGS.md** for a comprehensive list of 34+ bugs including:
-- Buffer overflows (#1, #2, #7, #14, #15)
+- ~~Buffer overflows (#1, #2, #7, #14, #15)~~ - Partially fixed: Keydef size limits now enforced
 - Race conditions (#3, #12)
 - Memory safety issues (#5, #8-11)
-- Weak encryption (#31, #32, #34)
+- ~~Weak encryption (#31, #32, #34)~~ - Improved: Now using AES-128-GCM with authentication (pico-kvstore/mbedtls)
+
+**Recent Improvements (November 2025):**
+- ✅ Migrated from custom flash storage to pico-kvstore with on-demand loading
+- ✅ Upgraded encryption: AES-128-GCM with authentication (mbedtls)
+- ✅ Password validation: SHA256 hash verification, rejects incorrect passwords
+- ✅ Public/private keydef support (public macros work when locked)
+- ✅ Removed 10-second WiFi startup delay
+- ✅ Cleaned up deprecated code (kb.local_store removed)
+- See **KVSTORE_STATUS.md** for current status and **KVSTORE_MIGRATION.md** for migration details
 
 ## Technical Documentation
 
 For detailed technical information, see:
-- **CLAUDE.md** - Architecture, code locations, building instructions
+- **CLAUDE.md** - Architecture, code locations, building instructions (updated with current encryption design)
+- **KVSTORE_STATUS.md** - Current status, completed work, and remaining TODOs
+- **KVSTORE_MIGRATION.md** - Details of the pico-kvstore migration (completed November 2025)
+- **WIFI_SETUP.md** - WiFi and HTTP API configuration guide (Pico W only)
 - **BUGS.md** - Comprehensive bug analysis
 
-## License
-
-[Add license information here]
-
-## Contributing
-
-This is a proof-of-concept project. Contributions welcome but please note the author has indicated the code would be rewritten before serious use.

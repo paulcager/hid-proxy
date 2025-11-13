@@ -35,6 +35,7 @@
 #include "pico/multicore.h"
 #include "hardware/clocks.h"
 #include "hardware/watchdog.h"
+#include "hardware/gpio.h"
 
 #include "pio_usb.h"
 #include "tusb.h"
@@ -46,8 +47,11 @@
 #endif
 #include "encryption.h"
 #include "usb_host.h"
+#include "kvstore_init.h"
+#include "keydef_store.h"
 
 #ifdef PICO_CYW43_SUPPORTED
+#include "pico/cyw43_arch.h"
 #include "wifi_config.h"
 #include "http_server.h"
 #endif
@@ -77,6 +81,46 @@ queue_t tud_to_physical_host_queue;
 // A queue of events from the physical host, to be sent to the physical keyboard.
 queue_t leds_queue;
 
+// LED control for visual status feedback (Num Lock)
+static uint8_t current_led_state = 0;       // Current LED state to send to keyboard
+static absolute_time_t next_led_toggle;     // When to toggle LED next
+uint32_t led_on_interval_ms = 0;            // How long LED stays on (ms)
+uint32_t led_off_interval_ms = 0;           // How long LED stays off (ms)
+
+// Built-in LED pin (GPIO25 on Pico/Pico2, CYW43 on Pico W/Pico2 W)
+#ifndef PICO_CYW43_SUPPORTED
+#define BUILTIN_LED_PIN 25
+#endif
+
+/*------------- LED Status Feedback -------------*/
+
+void update_status_led(void) {
+    if (led_on_interval_ms == 0 && led_off_interval_ms == 0) {
+        // LED off (locked/blank state)
+        current_led_state = 0;
+    } else if (time_reached(next_led_toggle)) {
+        // Toggle Num Lock LED (bit 0)
+        current_led_state ^= 0x01;
+
+        // Use different interval based on new state
+        uint32_t next_interval = (current_led_state & 0x01) ? led_on_interval_ms : led_off_interval_ms;
+        next_led_toggle = make_timeout_time_ms(next_interval);
+    }
+
+    // Update built-in LED to mirror NumLock state (bit 0)
+    bool led_on = (current_led_state & 0x01) != 0;
+#ifdef PICO_CYW43_SUPPORTED
+    // Use CYW43 LED on Pico W/Pico2 W
+    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led_on);
+#else
+    // Use GPIO25 on Pico/Pico2
+    gpio_put(BUILTIN_LED_PIN, led_on);
+#endif
+
+    // Send to physical keyboard (non-blocking)
+    queue_try_add(&leds_queue, &current_led_state);
+}
+
 /*------------- MAIN -------------*/
 
 // core0: handle device events
@@ -103,46 +147,54 @@ int main(void) {
     stdio_init_all();
 
     flash_safe_execute_core_init();
+    LOG_INFO("flash_safe_execute_core_init() complete\n");
+
+    // Initialize kvstore EARLY, before launching Core 1
+    LOG_INFO("Starting kvstore_init() (before Core 1 launch)\n");
+    if (!kvstore_init()) {
+        LOG_ERROR("Failed to initialize kvstore!\n");
+        // Continue anyway - device will work without persistent storage
+    }
+    LOG_INFO("kvstore_init() complete\n");
 
     queue_init(&keyboard_to_tud_queue, sizeof(hid_report_t), 12);
     queue_init(&tud_to_physical_host_queue, sizeof(send_data_t), 256);
     queue_init(&leds_queue, 1, 4);
 
-    kb.local_store = malloc(FLASH_STORE_SIZE);
-    lock();
+    LOG_INFO("Setting initial state to locked\n");
+    kb.status = locked;
 
     LOG_INFO("\n\nCore 0 (tud) running\n");
 
+    LOG_INFO("Resetting and launching Core 1\n");
+    multicore_reset_core1();
+    // Launch Core 1 AFTER kvstore is initialized to avoid flash contention
+    multicore_launch_core1(core1_main);
+    LOG_INFO("Core 1 launched\n");
 
 #ifdef PICO_CYW43_SUPPORTED
-#ifdef ENABLE_USB_STDIO
-    // Delay WiFi init to allow USB CDC to enumerate for debugging
-    // Use a polling loop instead of sleep to keep USB stack running
-    LOG_INFO("Delaying WiFi initialization for 10 seconds (USB CDC debug mode)...\n");
-    absolute_time_t wifi_start_time = make_timeout_time_ms(10000);
-    while (!time_reached(wifi_start_time)) {
-        tud_task(); // Process USB events during the delay
-        tight_loop_contents(); // Yield to other tasks
-    }
-    LOG_INFO("Starting WiFi initialization...\n");
-#endif
     // Initialize WiFi (if configured) - only on Pico W
     wifi_config_init();
     wifi_init();
+    LOG_INFO("WiFi initialization complete\n");
+    // CYW43 LED is automatically initialized by wifi_init()
 #else
     LOG_INFO("WiFi not supported on this hardware\n");
+    // Initialize built-in LED (GPIO25) on non-WiFi boards
+    gpio_init(BUILTIN_LED_PIN);
+    gpio_set_dir(BUILTIN_LED_PIN, GPIO_OUT);
+    gpio_put(BUILTIN_LED_PIN, 0);  // Start with LED off
+    LOG_INFO("Built-in LED initialized on GPIO%d\n", BUILTIN_LED_PIN);
 #endif
 
-    multicore_reset_core1();
-    // all USB task run in core1
-    multicore_launch_core1(core1_main);
-
+    LOG_INFO("Entering main loop\n");
     absolute_time_t last_interaction = get_absolute_time();
     status_t previous_status = locked;
 #ifdef PICO_CYW43_SUPPORTED
     bool http_server_started = false;
 #endif
 
+    LOG_INFO("Starting main event loop (first iteration)\n");
     while (true) {
         if (kb.status != previous_status) {
             LOG_INFO("State changed from %s to %s\n", status_string(previous_status), status_string(kb.status));
@@ -151,6 +203,7 @@ int main(void) {
 
         tud_task(); // tinyusb device task
         tud_cdc_write_flush();
+        update_status_led();  // Update LED status feedback
 #ifdef ENABLE_NFC
         nfc_task(kb.status == locked);
 #endif
@@ -182,14 +235,30 @@ int main(void) {
         if (kb.status == locked) {
 #ifdef ENABLE_NFC
             if (nfc_key_available()) {
-                uint8_t key[32];  // Full 32-byte AES-256 key
+                uint8_t key[32];  // Full 32-byte AES-256 key (use first 16 bytes for AES-128)
                 nfc_get_key(key);
-                printf("Setting 32-byte key from NFC\n");
-                hex_dump(key, 32);
-                enc_set_key(key, sizeof(key));
-                read_state(&kb);
-                if (kb.status == locked) {
-                    nfc_bad_key();
+                printf("Setting 16-byte key from NFC\n");
+                hex_dump(key, 16);
+                enc_set_key(key, 16);  // Use first 16 bytes for AES-128
+                kvstore_set_encryption_key(key);
+
+                // Try to verify the key by loading any keydef
+                uint8_t triggers[1];
+                if (keydef_list(triggers, 1) > 0) {
+                    keydef_t *test_def = keydef_load(triggers[0]);
+                    if (test_def != NULL) {
+                        // Key is valid
+                        free(test_def);
+                        kb.status = normal;
+                        printf("NFC authentication successful\n");
+                    } else {
+                        // Key is invalid
+                        nfc_bad_key();
+                    }
+                } else {
+                    // No keydefs stored yet - assume key is valid
+                    kb.status = normal;
+                    printf("NFC key accepted (no keydefs to verify)\n");
                 }
             }
 #endif
@@ -276,8 +345,11 @@ void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report, uint16_
 }
 
 void lock() {
-    memset(kb.local_store, 0, FLASH_STORE_SIZE);
     kb.status = locked;
+    led_on_interval_ms = 0;   // LED off when locked
+    led_off_interval_ms = 0;
+    kvstore_clear_encryption_key();  // Clear encryption key from memory
+    enc_clear_key();  // Also clear the key in encryption.c
 }
 
 void hex_dump(void const *ptr, size_t len) {

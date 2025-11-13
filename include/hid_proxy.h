@@ -47,6 +47,7 @@ typedef enum {
     blank_seen_magic,
     locked,
     locked_seen_magic,
+    locked_expecting_command,
     entering_password,
     normal,
     seen_magic,
@@ -66,6 +67,8 @@ inline const char *status_string(status_t s) {
             return "locked";
         case locked_seen_magic:
             return "locked_seen_magic";
+        case locked_expecting_command:
+            return "locked_expecting_command";
         case entering_password:
             return "entering_password";
         case normal:
@@ -85,10 +88,12 @@ inline const char *status_string(status_t s) {
     }
 }
 
+// Unified keydef structure (used by both kvstore and legacy flash parsing)
 typedef struct keydef {
-    int keycode;
-    int used;
-    hid_keyboard_report_t reports[0];
+    uint8_t trigger;           // HID keycode that triggers this macro (was 'keycode')
+    uint16_t count;            // Number of HID reports in the sequence (was 'used')
+    bool require_unlock;       // Does this keydef require device unlock? (Phase 4)
+    hid_keyboard_report_t reports[0];  // Variable-length array of HID reports
 } keydef_t;
 
 #define FLASH_STORE_MAGIC ("hidprox6")
@@ -101,7 +106,6 @@ typedef struct {
 
 typedef struct {
     status_t status;
-    store_t *local_store;
     keydef_t *key_being_defined;
     uint8_t key_being_replayed;
     keydef_t *next_to_replay;
@@ -113,6 +117,11 @@ extern kb_t kb;
 extern queue_t keyboard_to_tud_queue;
 extern queue_t tud_to_physical_host_queue;
 extern queue_t leds_queue;
+
+// LED control for visual status feedback (asymmetric on/off times)
+extern uint32_t led_on_interval_ms;   // How long LED stays on (ms)
+extern uint32_t led_off_interval_ms;  // How long LED stays off (ms)
+extern void update_status_led(void);
 
 extern void init_state(kb_t *kb);
 
@@ -148,14 +157,5 @@ inline void add_to_host_queue(uint8_t instance, uint8_t report_id, uint16_t len,
     memcpy(item.data, data, sizeof(item.data));
     queue_add_or_panic(&tud_to_physical_host_queue, &item);
 }
-
-#ifdef NDEBUG
-# define assert_sane(__kb) ((void)0)
-#else
-# define assert_sane(__kb) assert_sane_func(__FILE__, __LINE__, __kb)
-
-void assert_sane_func(char *file, int line, kb_t *k);
-
-#endif
 
 #endif //HID_PROXY_HID_PROXY_H

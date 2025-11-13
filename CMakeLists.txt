@@ -46,6 +46,9 @@ option(ENABLE_NFC "Enable NFC tag authentication support" OFF)
 
 add_subdirectory("./Pico-PIO-USB" pico_pio_usb)
 
+# Add pico-kvstore for key-value storage with encryption
+add_subdirectory("./pico-kvstore" pico_kvstore)
+
 # Add cdc_stdio_lib only if USB stdio is enabled
 if(ENABLE_USB_STDIO)
     add_subdirectory("./cdc_stdio_lib" cdc_stdio_lib)
@@ -58,10 +61,11 @@ add_executable(hid_proxy
         src/key_defs.c
         src/encryption.c
         src/pbkdf-lite.c
-        src/sane.c
         src/macros.c
         src/usb_host.c
         src/usb_descriptors.c
+        src/kvstore_init.c
+        src/keydef_store.c
         tiny-AES-c/aes.c
         tinycrypt/lib/source/sha256.c
         tinycrypt/lib/source/hmac.c
@@ -95,6 +99,8 @@ target_include_directories(hid_proxy PUBLIC
         ${CMAKE_CURRENT_LIST_DIR}/include
         ${CMAKE_CURRENT_LIST_DIR}
         ${CMAKE_CURRENT_LIST_DIR}/tinycrypt/lib/include
+        ${CMAKE_CURRENT_LIST_DIR}/pico-kvstore/include
+        ${CMAKE_CURRENT_LIST_DIR}/pico-kvstore/lib/pico-vfs/include
 )
 
 target_link_libraries(hid_proxy PUBLIC
@@ -109,6 +115,11 @@ target_link_libraries(hid_proxy PUBLIC
         tinyusb_board
         tinyusb_host
         pico_bootrom
+        kvstore
+        kvstore_logkvs
+        kvstore_securekvs
+        blockdevice_flash
+        pico_mbedtls
 )
 
 # Add I2C library only if NFC is enabled
