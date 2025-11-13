@@ -235,7 +235,9 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 case HID_KEY_SPACE:
                     kb.status = normal;
                     print_keydefs();
+#ifdef PICO_CYW43_SUPPORTED
                     web_access_enable();
+#endif
                     return;
 
                 case HID_KEY_ENTER:

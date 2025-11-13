@@ -752,11 +752,14 @@ bool serialize_macros_from_kvstore(char* output_buffer, size_t buffer_size) {
 }
 
 // Helper for old store_t-based functions (deprecated)
+// Guard against redefinition when included in test files
+#ifndef MACROS_TEST_API_H
 static inline keydef_t *next_keydef(const keydef_t *this) {
     const void *t = this;
     t += sizeof(keydef_t) + (this->count * sizeof(hid_keyboard_report_t));
     return (keydef_t*)t;
 }
+#endif
 
 // Old store_t-based version (deprecated)
 bool serialize_macros(const store_t* store, char* output_buffer, size_t buffer_size) {

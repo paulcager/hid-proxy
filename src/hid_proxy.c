@@ -35,6 +35,7 @@
 #include "pico/multicore.h"
 #include "hardware/clocks.h"
 #include "hardware/watchdog.h"
+#include "hardware/gpio.h"
 
 #include "pio_usb.h"
 #include "tusb.h"
@@ -50,6 +51,7 @@
 #include "keydef_store.h"
 
 #ifdef PICO_CYW43_SUPPORTED
+#include "pico/cyw43_arch.h"
 #include "wifi_config.h"
 #include "http_server.h"
 #endif
@@ -85,6 +87,11 @@ static absolute_time_t next_led_toggle;     // When to toggle LED next
 uint32_t led_on_interval_ms = 0;            // How long LED stays on (ms)
 uint32_t led_off_interval_ms = 0;           // How long LED stays off (ms)
 
+// Built-in LED pin (GPIO25 on Pico/Pico2, CYW43 on Pico W/Pico2 W)
+#ifndef PICO_CYW43_SUPPORTED
+#define BUILTIN_LED_PIN 25
+#endif
+
 /*------------- LED Status Feedback -------------*/
 
 void update_status_led(void) {
@@ -99,6 +106,16 @@ void update_status_led(void) {
         uint32_t next_interval = (current_led_state & 0x01) ? led_on_interval_ms : led_off_interval_ms;
         next_led_toggle = make_timeout_time_ms(next_interval);
     }
+
+    // Update built-in LED to mirror NumLock state (bit 0)
+    bool led_on = (current_led_state & 0x01) != 0;
+#ifdef PICO_CYW43_SUPPORTED
+    // Use CYW43 LED on Pico W/Pico2 W
+    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led_on);
+#else
+    // Use GPIO25 on Pico/Pico2
+    gpio_put(BUILTIN_LED_PIN, led_on);
+#endif
 
     // Send to physical keyboard (non-blocking)
     queue_try_add(&leds_queue, &current_led_state);
@@ -160,8 +177,14 @@ int main(void) {
     wifi_config_init();
     wifi_init();
     LOG_INFO("WiFi initialization complete\n");
+    // CYW43 LED is automatically initialized by wifi_init()
 #else
     LOG_INFO("WiFi not supported on this hardware\n");
+    // Initialize built-in LED (GPIO25) on non-WiFi boards
+    gpio_init(BUILTIN_LED_PIN);
+    gpio_set_dir(BUILTIN_LED_PIN, GPIO_OUT);
+    gpio_put(BUILTIN_LED_PIN, 0);  // Start with LED off
+    LOG_INFO("Built-in LED initialized on GPIO%d\n", BUILTIN_LED_PIN);
 #endif
 
     LOG_INFO("Entering main loop\n");
