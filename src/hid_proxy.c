@@ -54,6 +54,7 @@
 #include "pico/cyw43_arch.h"
 #include "wifi_config.h"
 #include "http_server.h"
+#include "mqtt_client.h"
 #endif
 
 #ifdef ENABLE_USB_STDIO
@@ -87,6 +88,10 @@ static absolute_time_t next_led_toggle;     // When to toggle LED next
 uint32_t led_on_interval_ms = 0;            // How long LED stays on (ms)
 uint32_t led_off_interval_ms = 0;           // How long LED stays off (ms)
 
+// USB suspend/resume state
+volatile bool usb_suspended = false;
+static uint32_t pre_suspend_clock_khz = 0;
+
 // Built-in LED pin (GPIO25 on Pico/Pico2, CYW43 on Pico W/Pico2 W)
 #ifndef PICO_CYW43_SUPPORTED
 #define BUILTIN_LED_PIN 25
@@ -119,6 +124,50 @@ void update_status_led(void) {
 
     // Send to physical keyboard (non-blocking)
     queue_try_add(&leds_queue, &current_led_state);
+}
+
+/*------------- USB Suspend/Resume Callbacks -------------*/
+
+// Invoked when USB bus is suspended
+// remote_wakeup_en: if true, host allows us to send wakeup signal
+void tud_suspend_cb(bool remote_wakeup_en) {
+    usb_suspended = true;
+    LOG_INFO("USB suspended (remote_wakeup=%d)\n", remote_wakeup_en);
+
+    // Save current clock speed
+    pre_suspend_clock_khz = clock_get_hz(clk_sys) / 1000;
+
+#ifdef PICO_CYW43_SUPPORTED
+    // Shut down WiFi to save power
+    if (wifi_is_initialized()) {
+        wifi_suspend();
+    }
+#endif
+
+    // Lower CPU clock to minimum stable frequency
+    set_sys_clock_khz(48000, true);  // 48MHz
+
+    LOG_INFO("Entering low-power mode (48MHz)\n");
+}
+
+// Invoked when USB bus is resumed
+void tud_resume_cb(void) {
+    LOG_INFO("USB resumed\n");
+    usb_suspended = false;
+
+    // Restore CPU clock
+    if (pre_suspend_clock_khz > 0) {
+        set_sys_clock_khz(pre_suspend_clock_khz, true);
+    }
+
+#ifdef PICO_CYW43_SUPPORTED
+    // Resume WiFi
+    if (wifi_is_initialized()) {
+        wifi_resume();
+    }
+#endif
+
+    LOG_INFO("Resumed to normal operation (%d MHz)\n", clock_get_hz(clk_sys) / 1000000);
 }
 
 /*------------- MAIN -------------*/
@@ -192,6 +241,7 @@ int main(void) {
     status_t previous_status = locked;
 #ifdef PICO_CYW43_SUPPORTED
     bool http_server_started = false;
+    bool mqtt_client_started = false;
 #endif
 
     LOG_INFO("Starting main event loop (first iteration)\n");
@@ -201,28 +251,44 @@ int main(void) {
             previous_status = kb.status;
         }
 
-        tud_task(); // tinyusb device task
+        // Always run USB device task (handles suspend/resume internally)
+        tud_task();
         tud_cdc_write_flush();
-        update_status_led();  // Update LED status feedback
+
+        // Skip non-critical tasks when suspended to save power
+        if (!usb_suspended) {
+            update_status_led();  // Update LED status feedback
 #ifdef ENABLE_NFC
-        nfc_task(kb.status == locked);
+            nfc_task(kb.status == locked);
 #endif
 
 #ifdef PICO_CYW43_SUPPORTED
-        // WiFi tasks (only on Pico W)
-        wifi_task();
-        if (wifi_is_connected() && !http_server_started) {
-            http_server_init();
-            http_server_started = true;
-        }
-        http_server_task();
+            // WiFi tasks (only on Pico W, and only when not suspended)
+            if (!wifi_is_suspended()) {
+                wifi_task();
+                if (wifi_is_connected() && !http_server_started) {
+                    http_server_init();
+                    http_server_started = true;
+                }
+                if (wifi_is_connected() && !mqtt_client_started) {
+                    mqtt_client_started = mqtt_client_init();
+                }
+                http_server_task();
+                mqtt_client_task();
+            }
 #endif
+        }
 
+        // Process keyboard reports even when suspended (needed for remote wakeup)
         hid_report_t report;
-        // Anything sent to us from the keyboard process (PIO on core1)?
         if (queue_try_remove(&keyboard_to_tud_queue, &report)) {
             last_interaction = get_absolute_time();
             next_report(report);
+
+            // If suspended, try to send remote wakeup signal
+            if (usb_suspended && tud_remote_wakeup()) {
+                LOG_INFO("Sent remote wakeup signal\n");
+            }
         }
 
         // Anything waiting to be sent to the (real) host?
@@ -249,7 +315,7 @@ int main(void) {
                     if (test_def != NULL) {
                         // Key is valid
                         free(test_def);
-                        kb.status = normal;
+                        unlock();
                         printf("NFC authentication successful\n");
                     } else {
                         // Key is invalid
@@ -257,7 +323,7 @@ int main(void) {
                     }
                 } else {
                     // No keydefs stored yet - assume key is valid
-                    kb.status = normal;
+                    unlock();
                     printf("NFC key accepted (no keydefs to verify)\n");
                 }
             }
@@ -267,6 +333,11 @@ int main(void) {
         if (kb.status != locked && absolute_time_diff_us(last_interaction, get_absolute_time()) > 1000 * IDLE_TIMEOUT_MILLIS) {
             LOG_INFO("Timed out - clearing encrypted data\n");
             lock();
+        }
+
+        // When suspended, use __wfe() to sleep until interrupt (saves power)
+        if (usb_suspended) {
+            __wfe();
         }
     }
 
@@ -350,6 +421,22 @@ void lock() {
     led_off_interval_ms = 0;
     kvstore_clear_encryption_key();  // Clear encryption key from memory
     enc_clear_key();  // Also clear the key in encryption.c
+
+#ifdef PICO_CYW43_SUPPORTED
+    // Publish lock event to MQTT
+    mqtt_publish_lock_state(true);
+#endif
+}
+
+void unlock() {
+    kb.status = normal;
+    led_on_interval_ms = 100;    // Slow pulse when unlocked
+    led_off_interval_ms = 2400;
+
+#ifdef PICO_CYW43_SUPPORTED
+    // Publish unlock event to MQTT
+    mqtt_publish_lock_state(false);
+#endif
 }
 
 void hex_dump(void const *ptr, size_t len) {

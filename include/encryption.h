@@ -17,4 +17,7 @@ void enc_derive_key_from_password();
 
 void enc_clear_key();
 
+// Helper function to derive key from password string and attempt unlock
+bool enc_unlock_with_password(const char *password);
+
 #endif //HID_PROXY_ENCRYPTION_H

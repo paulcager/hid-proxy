@@ -68,9 +68,10 @@
 #define LWIP_NUM_NETIF_CLIENT_DATA  (LWIP_MDNS_RESPONDER)
 #define LWIP_IGMP                   1
 
-// Memory pool sizes - increase to avoid exhaustion with mDNS + HTTP server
-#define MEMP_NUM_SYS_TIMEOUT        16  // Default is 6, increase for mDNS + HTTP + WiFi timers
+// Memory pool sizes - increase to avoid exhaustion with mDNS + HTTP + MQTT
+#define MEMP_NUM_SYS_TIMEOUT        (LWIP_NUM_SYS_TIMEOUT_INTERNAL + 2)  // Account for MQTT timers
 #define MEMP_NUM_NETBUF             8   // Increase for HTTP POST handling
+#define MEMP_NUM_TCPIP_MSG_INPKT    16  // Increase for TLS message handling
 
 #ifndef NDEBUG
 #define LWIP_DEBUG                  1
@@ -105,5 +106,16 @@
 #define TCPIP_DEBUG                 LWIP_DBG_OFF
 #define SLIP_DEBUG                  LWIP_DBG_OFF
 #define DHCP_DEBUG                  LWIP_DBG_OFF
+
+// MQTT settings
+#define LWIP_MQTT                   1
+
+// TLS/ALTCP settings (for MQTT over TLS and HTTPS)
+#define LWIP_ALTCP                  1
+#define LWIP_ALTCP_TLS              1
+#define LWIP_ALTCP_TLS_MBEDTLS      1
+
+// mbedTLS configuration for TLS support
+#define MBEDTLS_KEY_EXCHANGE_RSA_ENABLED
 
 #endif /* _LWIPOPTS_H */

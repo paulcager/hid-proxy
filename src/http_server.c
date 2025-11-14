@@ -3,6 +3,7 @@
 #include "hid_proxy.h"
 #include "macros.h"
 #include "keydef_store.h"
+#include "encryption.h"
 #include "lwip/tcp.h"
 #include "lwip/apps/httpd.h"
 #include "lwip/apps/fs.h"
@@ -16,6 +17,11 @@ static char http_macros_buffer[HTTP_MACROS_BUFFER_SIZE];
 // Buffer for POST data
 static char http_post_buffer[HTTP_MACROS_BUFFER_SIZE];
 static size_t http_post_offset = 0;
+
+// Buffer for unlock password
+#define HTTP_PASSWORD_BUFFER_SIZE 256
+static char http_password_buffer[HTTP_PASSWORD_BUFFER_SIZE];
+static bool is_unlock_request = false;
 
 // Forward declarations of CGI handlers
 static const char *status_cgi_handler(int iIndex, int iNumParams, char *pcParam[], char *pcValue[]);
@@ -84,8 +90,22 @@ err_t httpd_post_begin(void *connection, const char *uri, const char *http_reque
         }
 
         // Reset buffer
+        is_unlock_request = false;
         http_post_offset = 0;
         memset(http_post_buffer, 0, sizeof(http_post_buffer));
+
+        return ERR_OK;
+    }
+
+    if (strcmp(uri, "/unlock") == 0) {
+        // /unlock endpoint is always available (no web access check required)
+        // This allows unlocking the device remotely without physical access
+        // Security: Password must be correct, and WiFi must be configured
+
+        // Reset password buffer
+        is_unlock_request = true;
+        http_post_offset = 0;
+        memset(http_password_buffer, 0, sizeof(http_password_buffer));
 
         return ERR_OK;
     }
@@ -97,14 +117,26 @@ err_t httpd_post_begin(void *connection, const char *uri, const char *http_reque
 err_t httpd_post_receive_data(void *connection, struct pbuf *p) {
     (void)connection;
 
-    // Copy data into buffer
-    if (http_post_offset + p->tot_len < HTTP_MACROS_BUFFER_SIZE) {
-        pbuf_copy_partial(p, http_post_buffer + http_post_offset, p->tot_len, 0);
-        http_post_offset += p->tot_len;
-        http_post_buffer[http_post_offset] = '\0';
+    if (is_unlock_request) {
+        // Copy password data into password buffer
+        if (http_post_offset + p->tot_len < HTTP_PASSWORD_BUFFER_SIZE) {
+            pbuf_copy_partial(p, http_password_buffer + http_post_offset, p->tot_len, 0);
+            http_post_offset += p->tot_len;
+            http_password_buffer[http_post_offset] = '\0';
+        } else {
+            LOG_ERROR("Password data too large\n");
+            return ERR_MEM;
+        }
     } else {
-        LOG_ERROR("POST data too large\n");
-        return ERR_MEM;
+        // Copy data into macros buffer
+        if (http_post_offset + p->tot_len < HTTP_MACROS_BUFFER_SIZE) {
+            pbuf_copy_partial(p, http_post_buffer + http_post_offset, p->tot_len, 0);
+            http_post_offset += p->tot_len;
+            http_post_buffer[http_post_offset] = '\0';
+        } else {
+            LOG_ERROR("POST data too large\n");
+            return ERR_MEM;
+        }
     }
 
     return ERR_OK;
@@ -113,15 +145,39 @@ err_t httpd_post_receive_data(void *connection, struct pbuf *p) {
 void httpd_post_finished(void *connection, char *response_uri, u16_t response_uri_len) {
     (void)connection;
 
-    LOG_INFO("POST finished, parsing %zu bytes\n", http_post_offset);
+    LOG_INFO("POST finished, processing %zu bytes\n", http_post_offset);
 
-    // Parse and save directly to kvstore
-    if (parse_macros_to_kvstore(http_post_buffer)) {
-        LOG_INFO("Macros updated successfully in kvstore\n");
-        snprintf(response_uri, response_uri_len, "/success.html");
+    if (is_unlock_request) {
+        // Handle unlock request
+        LOG_INFO("Processing unlock request\n");
+
+        // Attempt to unlock with provided password
+        bool success = enc_unlock_with_password(http_password_buffer);
+
+        // Clear password buffer immediately
+        memset(http_password_buffer, 0, sizeof(http_password_buffer));
+
+        if (success) {
+            // Update device status
+            unlock();
+            LOG_INFO("Device unlocked via HTTP\n");
+            snprintf(response_uri, response_uri_len, "/unlock_success.json");
+        } else {
+            LOG_INFO("Unlock failed - incorrect password\n");
+            snprintf(response_uri, response_uri_len, "/unlock_failed.json");
+        }
+
+        is_unlock_request = false;
     } else {
-        LOG_ERROR("Failed to parse macros\n");
-        snprintf(response_uri, response_uri_len, "/error.html");
+        // Handle macros POST
+        // Parse and save directly to kvstore
+        if (parse_macros_to_kvstore(http_post_buffer)) {
+            LOG_INFO("Macros updated successfully in kvstore\n");
+            snprintf(response_uri, response_uri_len, "/success.html");
+        } else {
+            LOG_ERROR("Failed to parse macros\n");
+            snprintf(response_uri, response_uri_len, "/error.html");
+        }
     }
 }
 
@@ -167,6 +223,26 @@ int fs_open_custom(struct fs_file *file, const char *name) {
         file->index = file->len;
         // Let lwIP generate the headers. The .json extension should produce the correct Content-Type.
         // file->flags = FS_FILE_FLAGS_HEADER_INCLUDED;
+        return 1;
+    }
+
+    if (strcmp(name, "/unlock_success.json") == 0) {
+        snprintf(http_macros_buffer, sizeof(http_macros_buffer),
+                 "{\"success\":true,\"message\":\"Device unlocked successfully\"}");
+        memset(file, 0, sizeof(struct fs_file));
+        file->data = http_macros_buffer;
+        file->len = strlen(http_macros_buffer);
+        file->index = file->len;
+        return 1;
+    }
+
+    if (strcmp(name, "/unlock_failed.json") == 0) {
+        snprintf(http_macros_buffer, sizeof(http_macros_buffer),
+                 "{\"success\":false,\"message\":\"Incorrect password\"}");
+        memset(file, 0, sizeof(struct fs_file));
+        file->data = http_macros_buffer;
+        file->len = strlen(http_macros_buffer);
+        file->index = file->len;
         return 1;
     }
 

@@ -161,7 +161,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     enc_clear_key();
                 } else if (kb.status == entering_password) {
                     // Unlocking - no need to re-save anything
-                    kb.status = normal;
+                    unlock();
                     led_on_interval_ms = 100;    // Slow pulse when unlocked
                     led_off_interval_ms = 2400;
                     printf("Unlocked\n");
@@ -170,7 +170,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     // Only re-encrypt if there are keydefs AND we can read them
                     // (i.e., this is a password change, not first-time setup)
                     printf("Password set successfully\n");
-                    kb.status = normal;
+                    unlock();
                     led_on_interval_ms = 100;    // Slow pulse when unlocked
                     led_off_interval_ms = 2400;
 
@@ -213,17 +213,17 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     uint8_t key[32];
                     enc_get_key(key, sizeof(key));
                     nfc_write_key(key, sizeof(key), 30 * 1000);
-                    kb.status = normal;
+                    unlock();
                     return;
                 }
 #else
                     // NFC not enabled - ignore PRINT_SCREEN command
-                    kb.status = normal;
+                    unlock();
                     return;
 #endif
 
                 case HID_KEY_ESCAPE:
-                    kb.status = normal;
+                    unlock();
                     led_on_interval_ms = 100;    // Back to slow pulse
                     led_off_interval_ms = 2400;
                     return;
@@ -233,7 +233,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     return;
 
                 case HID_KEY_SPACE:
-                    kb.status = normal;
+                    unlock();
                     print_keydefs();
 #ifdef PICO_CYW43_SUPPORTED
                     web_access_enable();
@@ -243,7 +243,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 case HID_KEY_ENTER:
                     // When unlocked, ENTER now starts capturing keystrokes to unlock (if locked).
                     // Re-encryption moved to INSERT to avoid accidental data loss.
-                    kb.status = normal;
+                    unlock();
                     return;
 
                 case HID_KEY_INSERT:
@@ -261,7 +261,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     return;
 
                 default:
-                    kb.status = normal;
+                    unlock();
                     led_on_interval_ms = 100;    // Back to slow pulse
                     led_off_interval_ms = 2400;
                     evaluate_keydef(kb_report, key0);
@@ -293,7 +293,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     kb.key_being_defined = NULL;
                 }
 
-                kb.status = normal;
+                unlock();
                 led_on_interval_ms = 100;    // Back to slow pulse after defining
                 led_off_interval_ms = 2400;
                 return;

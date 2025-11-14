@@ -74,11 +74,20 @@ void core1_main() {
 }
 
 _Noreturn void core1_loop() {
+    extern volatile bool usb_suspended;
+
     while (true) {
         tuh_task(); // tinyusb host task
-        uint8_t leds;
-        if (queue_try_remove(&leds_queue, &leds)) {
-            tuh_hid_set_report(1, 0, 0, HID_REPORT_TYPE_OUTPUT, &leds, sizeof(leds));
+
+        // Only update LEDs when not suspended to save power
+        if (!usb_suspended) {
+            uint8_t leds;
+            if (queue_try_remove(&leds_queue, &leds)) {
+                tuh_hid_set_report(1, 0, 0, HID_REPORT_TYPE_OUTPUT, &leds, sizeof(leds));
+            }
+        } else {
+            // Sleep when suspended (wake on keyboard input interrupt)
+            __wfe();
         }
     }
 }

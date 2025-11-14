@@ -79,11 +79,13 @@ if(ENABLE_NFC)
     )
 endif()
 
-# Add WiFi/HTTP sources only if building for Pico W
+# Add WiFi/HTTP/MQTT/TLS sources only if building for Pico W
 if(PICO_CYW43_SUPPORTED)
     target_sources(hid_proxy PRIVATE
         src/wifi_config.c
         src/http_server.c
+        src/https_cert.c
+        src/mqtt_client.c
     )
 endif()
 
@@ -129,12 +131,15 @@ if(ENABLE_NFC)
     )
 endif()
 
-# Add WiFi/HTTP libraries only if building for Pico W
+# Add WiFi/HTTP/MQTT/TLS libraries only if building for Pico W
 if(PICO_CYW43_SUPPORTED)
     target_link_libraries(hid_proxy PUBLIC
         pico_cyw43_arch_lwip_threadsafe_background
         pico_lwip_mdns
         pico_lwip_http
+        pico_lwip_mqtt
+        pico_lwip_mbedtls
+        pico_mbedtls
     )
 endif()
 
@@ -209,8 +214,50 @@ if(PICO_CYW43_SUPPORTED)
             message(STATUS "Found WIFI_PASSWORD.")
             target_compile_definitions(hid_proxy PRIVATE "WIFI_PASSWORD=\"${WIFI_PASSWORD}\"")
         endif()
+
+        # --- MQTT_BROKER ---
+        if("${ENV_CONTENT}" MATCHES "MQTT_BROKER=([^
+]*)")
+            set(MQTT_BROKER "${CMAKE_MATCH_1}")
+            string(STRIP "${MQTT_BROKER}" MQTT_BROKER)
+
+            # Unquote if quoted
+            string(REGEX MATCH "^\"(.*)\"$" _ "${MQTT_BROKER}")
+            if(CMAKE_MATCH_COUNT GREATER 0)
+                set(MQTT_BROKER "${CMAKE_MATCH_1}")
+            else()
+                string(REGEX MATCH "^'(.*)'$" _ "${MQTT_BROKER}")
+                if(CMAKE_MATCH_COUNT GREATER 0)
+                    set(MQTT_BROKER "${CMAKE_MATCH_1}")
+                endif()
+            endif()
+
+            message(STATUS "Found MQTT_BROKER: ${MQTT_BROKER}")
+            target_compile_definitions(hid_proxy PRIVATE "MQTT_BROKER=\"${MQTT_BROKER}\"")
+        endif()
+
+        # --- MQTT_PORT ---
+        if("${ENV_CONTENT}" MATCHES "MQTT_PORT=([^
+]*)")
+            set(MQTT_PORT "${CMAKE_MATCH_1}")
+            string(STRIP "${MQTT_PORT}" MQTT_PORT)
+            message(STATUS "Found MQTT_PORT: ${MQTT_PORT}")
+            target_compile_definitions(hid_proxy PRIVATE "MQTT_PORT=${MQTT_PORT}")
+        endif()
+
+        # --- MQTT_USE_TLS ---
+        if("${ENV_CONTENT}" MATCHES "MQTT_USE_TLS=([^
+]*)")
+            set(MQTT_USE_TLS "${CMAKE_MATCH_1}")
+            string(STRIP "${MQTT_USE_TLS}" MQTT_USE_TLS)
+            string(TOUPPER "${MQTT_USE_TLS}" MQTT_USE_TLS_UPPER)
+            if("${MQTT_USE_TLS_UPPER}" STREQUAL "TRUE" OR "${MQTT_USE_TLS_UPPER}" STREQUAL "1")
+                message(STATUS "MQTT TLS enabled")
+                target_compile_definitions(hid_proxy PRIVATE "MQTT_USE_TLS=1")
+            endif()
+        endif()
     else()
-        message(STATUS ".env file not found, skipping build-time WiFi config.")
+        message(STATUS ".env file not found, skipping build-time WiFi/MQTT config.")
     endif()
 endif()
 

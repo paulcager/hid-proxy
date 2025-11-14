@@ -26,6 +26,7 @@ web_state_t web_state = {
 static wifi_config_t current_config;
 static bool wifi_initialized = false;
 static bool wifi_connected = false;
+static bool wifi_suspended = false;
 
 void wifi_config_init(void) {
     // Load WiFi config from kvstore
@@ -252,4 +253,55 @@ void web_access_disable(void) {
 
 bool web_access_is_enabled(void) {
     return web_state.web_access_enabled;
+}
+
+void wifi_suspend(void) {
+    if (!wifi_initialized || wifi_suspended) {
+        return;
+    }
+
+    LOG_INFO("Suspending WiFi...\n");
+
+    // Disconnect gracefully
+    cyw43_wifi_leave(&cyw43_state, CYW43_ITF_STA);
+
+    // Put WiFi into maximum power save mode
+    cyw43_wifi_pm(&cyw43_state, CYW43_PM2_POWERSAVE_MODE);
+
+    wifi_suspended = true;
+    wifi_connected = false;
+    LOG_INFO("WiFi suspended\n");
+}
+
+void wifi_resume(void) {
+    if (!wifi_initialized || !wifi_suspended) {
+        return;
+    }
+
+    LOG_INFO("Resuming WiFi...\n");
+
+    // Exit power save mode
+    cyw43_wifi_pm(&cyw43_state, CYW43_NO_POWERSAVE_MODE);
+
+    // Reconnect to network
+    int err = cyw43_arch_wifi_connect_async(
+        current_config.ssid,
+        current_config.password,
+        CYW43_AUTH_WPA2_AES_PSK
+    );
+
+    if (err) {
+        LOG_ERROR("Failed to reconnect WiFi: %d\n", err);
+    }
+
+    wifi_suspended = false;
+    LOG_INFO("WiFi resume initiated\n");
+}
+
+bool wifi_is_initialized(void) {
+    return wifi_initialized;
+}
+
+bool wifi_is_suspended(void) {
+    return wifi_suspended;
 }
