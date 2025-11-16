@@ -96,6 +96,11 @@ typedef struct keydef {
     hid_keyboard_report_t reports[0];  // Variable-length array of HID reports
 } keydef_t;
 
+/*
+ * LEGACY/DEPRECATED: store_t is the old flash storage format
+ * This struct is NO LONGER USED in production code - kvstore is used instead.
+ * Kept only for compatibility with unit tests (test/test_macros.c).
+ */
 #define FLASH_STORE_MAGIC ("hidprox6")
 typedef struct {
     char magic[8];
@@ -129,7 +134,9 @@ extern void save_state(kb_t *kb);
 
 extern void read_state(kb_t *kb);
 
-extern void queue_add_or_panic(queue_t *q, const void *data);
+// Queue management functions
+extern void queue_add_with_backpressure(queue_t *q, const void *data);
+extern void queue_add_realtime(queue_t *q, const void *data);
 
 extern void print_keydef(const keydef_t *def);
 
@@ -148,6 +155,14 @@ extern void hex_dump(void const *p, size_t len);
 extern void lock();
 extern void unlock();
 
+/*! \brief Add HID report to host output queue (with backpressure)
+ *
+ * This is primarily used for macro playback, so it uses backpressure
+ * to ensure all keystrokes are sent without data loss.
+ *
+ * For real-time passthrough, use add_to_host_queue_realtime() instead
+ * to avoid blocking on queue full conditions.
+ */
 inline void add_to_host_queue(uint8_t instance, uint8_t report_id, uint16_t len, void *data) {
     send_data_t item = {.instance = instance, .report_id = report_id, .len = len};
 
@@ -156,7 +171,23 @@ inline void add_to_host_queue(uint8_t instance, uint8_t report_id, uint16_t len,
     }
 
     memcpy(item.data, data, sizeof(item.data));
-    queue_add_or_panic(&tud_to_physical_host_queue, &item);
+    queue_add_with_backpressure(&tud_to_physical_host_queue, &item);
+}
+
+/*! \brief Add HID report to host output queue (realtime, non-blocking)
+ *
+ * Used for real-time keyboard/mouse passthrough where blocking is unacceptable.
+ * If queue is full, drops oldest item to make room (with warning log).
+ */
+inline void add_to_host_queue_realtime(uint8_t instance, uint8_t report_id, uint16_t len, void *data) {
+    send_data_t item = {.instance = instance, .report_id = report_id, .len = len};
+
+    if (len > sizeof(item.data)) {
+        panic("Asked to send %d bytes of data", len);
+    }
+
+    memcpy(item.data, data, sizeof(item.data));
+    queue_add_realtime(&tud_to_physical_host_queue, &item);
 }
 
 #endif //HID_PROXY_HID_PROXY_H

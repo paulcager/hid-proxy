@@ -73,10 +73,11 @@ On first use, any password is accepted and its hash is stored. Subsequent unlock
 
 **WiFi Configuration** (wifi_config.c/h): Manages WiFi connection using CYW43 chip on Pico W. Stores WiFi credentials in kvstore (`wifi.ssid`, `wifi.password`, `wifi.country`) unencrypted. WiFi credentials are not considered sensitive in this application context. Provides non-blocking WiFi connection that runs in background without affecting keyboard functionality.
 
-**HTTP Server** (http_server.c/h): Implements lwIP-based HTTP server for macro configuration. Provides REST-like endpoints for GET/POST of macros in text format. Integrates with physical unlock system (both-shifts+SPACE) for security.
+**HTTP Server** (http_server.c/h): Implements lwIP-based HTTP server for macro configuration. Provides REST-like endpoints for GET/POST of macros in text format. Integrates with physical unlock system (both-shifts+SPACE) for security. Includes POST /unlock endpoint for remote unlocking with password (always available when WiFi connected).
 
-**Web Access Control**: Requires physical presence (Double-shift then SPACE) to enable web access for 5 minutes.
-Prevents remote configuration without physical keyboard access.
+**Web Access Control**: Requires physical presence (Double-shift then SPACE) to enable web access for 5 minutes. Prevents remote configuration without physical keyboard access.
+
+**MQTT Client** (mqtt_client.c/h): Publishes lock/unlock events to MQTT broker for Home Assistant integration. Uses unique topic names based on board ID (e.g., `hidproxy-a3f4/lock`). Supports optional TLS for secure connections. Configured via .env file (MQTT_BROKER, MQTT_PORT, MQTT_USE_TLS). Non-blocking operation runs in lwIP background tasks.
 
 ## Building
 
@@ -186,7 +187,8 @@ The text format for macros (used for HTTP/network configuration):
 - Macro parser: `parse_macros_to_kvstore()` in macros.c (parses text format, saves to kvstore)
 - Macro serializer: `serialize_macros_from_kvstore()` in macros.c (loads from kvstore, outputs text)
 - PBKDF2 key derivation: `enc_derive_key_from_password()` in encryption.c
-- Lock function: `lock()` in hid_proxy.c (clears encryption keys from memory)
+- Lock function: `lock()` in hid_proxy.c (clears encryption keys from memory, publishes MQTT event)
+- Unlock function: `unlock()` in hid_proxy.c (sets state to normal, publishes MQTT event)
 - Legacy stubs: `store_encrypt()`/`store_decrypt()` in encryption.c, `save_state()`/`read_state()` in flash.c
 - NFC state machine: `nfc_task()` in nfc_tag.c:373
 - USB host enumeration: `tuh_hid_mount_cb()` in usb_host.c:74
@@ -195,7 +197,10 @@ The text format for macros (used for HTTP/network configuration):
 - HTTP server init: `http_server_init()` in http_server.c
 - HTTP GET /macros.txt: `fs_open_custom()` in http_server.c
 - HTTP POST /macros.txt: `http_post_*()` handlers in http_server.c
+- HTTP POST /unlock: `httpd_post_finished()` in http_server.c (remote password unlock)
 - HTTP GET /status: `status_cgi_handler()` in http_server.c
+- MQTT client init: `mqtt_client_init()` in mqtt_client.c (connects to broker, sets up LWT)
+- MQTT publish: `mqtt_publish_lock_state()` in mqtt_client.c (publishes lock/unlock events)
 
 ## Configuration Constants
 
@@ -256,6 +261,9 @@ curl http://hidproxy-XXXX.local/status
 
 See CONFIGURATION_OPTIONS.md for additional planned features:
 - Serial console for WiFi setup (currently requires manual flash programming or a .env file at build time)
-- MQTT publishing of keystroke events to Home Assistant
+- ~~MQTT publishing of keystroke events to Home Assistant~~ ✅ **Implemented**: Lock/unlock events now published (see MQTT_SETUP.md)
+- MQTT publishing of all keystroke events (optional, privacy concerns)
+- MQTT configuration of macros (subscribe to config topic)
 - Simple web UI for in-browser macro editing
 - HTTP Basic Auth (optional secondary protection layer)
+- MQTT auto-discovery for Home Assistant

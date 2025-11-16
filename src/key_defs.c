@@ -14,6 +14,7 @@
 
 #ifdef PICO_CYW43_SUPPORTED
 #include "wifi_config.h"
+#include "wifi_console.h"
 #endif
 
 static hid_keyboard_report_t release_all_keys = {0, 0, {0, 0, 0, 0, 0, 0}};
@@ -45,7 +46,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
             if (kb_report->modifier == 0x22 && key0 == 0) {
                 kb.status = blank_seen_magic;
             } else {
-                add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
+                add_to_host_queue_realtime(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
             }
 
             return;
@@ -76,7 +77,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 default:
                     // Any other key returns to blank and forwards keystroke
                     kb.status = blank;
-                    add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
+                    add_to_host_queue_realtime(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
                     return;
             }
 
@@ -84,7 +85,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
             if (kb_report->modifier == 0x22 && key0 == 0) {
                 kb.status = locked_seen_magic;
             } else {
-                add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
+                add_to_host_queue_realtime(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
             }
 
             return;
@@ -166,17 +167,20 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     led_off_interval_ms = 2400;
                     printf("Unlocked\n");
                 } else {
-                    // Changing/setting password
-                    // Only re-encrypt if there are keydefs AND we can read them
-                    // (i.e., this is a password change, not first-time setup)
-                    printf("Password set successfully\n");
-                    unlock();
-                    led_on_interval_ms = 100;    // Slow pulse when unlocked
-                    led_off_interval_ms = 2400;
-
-                    // TODO: Add password change support later
-                    // For now, password can only be set once on blank device
-                    // To change password, user must erase device (double-shift DEL) and start over
+                    // Changing password while unlocked
+                    // Re-encrypt all encrypted keydefs with new password
+                    if (kvstore_change_password(key)) {
+                        printf("Password changed successfully - all data re-encrypted\n");
+                        unlock();
+                        led_on_interval_ms = 100;    // Slow pulse when unlocked
+                        led_off_interval_ms = 2400;
+                    } else {
+                        printf("Password change failed\n");
+                        kb.status = locked;
+                        led_on_interval_ms = 0;   // LED off when locked
+                        led_off_interval_ms = 0;
+                        enc_clear_key();
+                    }
                 }
             }
 
@@ -189,7 +193,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 led_off_interval_ms = 50;
             } else {
                 LOG_TRACE("Adding to host Q: instance=%d, report_id=%d, len=%d\n", 0, REPORT_ID_KEYBOARD, sizeof(hid_keyboard_report_t));
-                add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
+                add_to_host_queue_realtime(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
             }
 
             return;
@@ -259,6 +263,22 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 case HID_KEY_END:
                     lock();  // Sets LED to off (0ms) internally
                     return;
+
+                case HID_KEY_W:
+#ifdef PICO_CYW43_SUPPORTED
+                    // WiFi configuration console
+                    printf("\nStarting WiFi configuration...\n");
+                    wifi_console_setup();
+                    unlock();
+                    led_on_interval_ms = 100;    // Back to slow pulse
+                    led_off_interval_ms = 2400;
+                    return;
+#else
+                    // WiFi not supported on this hardware
+                    printf("WiFi not supported on this hardware\n");
+                    unlock();
+                    return;
+#endif
 
                 default:
                     unlock();
@@ -420,7 +440,7 @@ void print_keydefs() {
 
     printf("DEBUG: Exited loop, closing find context...\n");
     kvs_find_close(&ctx);
-    printf("Total: %d keys\n");
+    printf("Total: %d keys\n", count);
     printf("========================\n\n");
 
     // Now serialize all keydefs in human-readable format

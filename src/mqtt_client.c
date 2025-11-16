@@ -141,8 +141,15 @@ bool mqtt_client_init(void) {
 
     // Setup client info
     mqtt_state.client_info.client_id = mqtt_state.client_id;
+#if defined(MQTT_USERNAME) && defined(MQTT_PASSWORD)
+    mqtt_state.client_info.client_user = MQTT_USERNAME;
+    mqtt_state.client_info.client_pass = MQTT_PASSWORD;
+    LOG_INFO("MQTT authentication enabled (user: %s)\n", MQTT_USERNAME);
+#else
     mqtt_state.client_info.client_user = NULL;
     mqtt_state.client_info.client_pass = NULL;
+    LOG_INFO("MQTT authentication disabled (no credentials)\n");
+#endif
     mqtt_state.client_info.keep_alive = MQTT_KEEP_ALIVE_S;
 
     // Setup Last Will and Testament (LWT) - publish "offline" when disconnected

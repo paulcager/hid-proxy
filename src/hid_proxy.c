@@ -167,7 +167,7 @@ void tud_resume_cb(void) {
     }
 #endif
 
-    LOG_INFO("Resumed to normal operation (%d MHz)\n", clock_get_hz(clk_sys) / 1000000);
+    LOG_INFO("Resumed to normal operation (%lu MHz)\n", clock_get_hz(clk_sys) / 1000000);
 }
 
 /*------------- MAIN -------------*/
@@ -357,12 +357,45 @@ void send_report_to_host(send_data_t to_send) {
     }
 }
 
-void queue_add_or_panic(queue_t *q, const void *data) {
+/*! \brief Add item to queue with backpressure (blocking)
+ *
+ * Used for macro playback where we want to ensure ALL keystrokes are sent.
+ * If queue is full, this function blocks and processes USB events (tud_task)
+ * to drain the queue. This naturally throttles macro playback to USB speed.
+ *
+ * \param q Queue to add to
+ * \param data Pointer to data to add
+ */
+void queue_add_with_backpressure(queue_t *q, const void *data) {
+    while (!queue_try_add(q, data)) {
+        // Queue full - process USB to drain it
+        tud_task();
+        tight_loop_contents();  // Yield to other core
+    }
+}
+
+/*! \brief Add item to queue with graceful degradation (non-blocking)
+ *
+ * Used for real-time keyboard input where we don't want to block.
+ * If queue is full, drops the OLDEST item to make room for the newest.
+ * This ensures real-time input never blocks, but may lose data under extreme load.
+ *
+ * \param q Queue to add to
+ * \param data Pointer to data to add
+ */
+void queue_add_realtime(queue_t *q, const void *data) {
     if (!queue_try_add(q, data)) {
-        // TODO - this is most likely to happen if we are sending large definitions
-        // more quickly than they can be sent over USB. Fix this by interleaving
-        // queue puts with tud_task and using blocking adds.
-        panic("Queue is full");
+        // Queue full - drop oldest item to make room
+        uint8_t discard_buffer[sizeof(send_data_t)];  // Max size of any queue item
+        if (queue_try_remove(q, discard_buffer)) {
+            LOG_WARNING("Queue overflow - dropped oldest report to make room\n");
+            // Try again (should succeed now)
+            if (!queue_try_add(q, data)) {
+                LOG_ERROR("Queue add failed even after drop - this shouldn't happen\n");
+            }
+        } else {
+            LOG_ERROR("Queue full but can't remove item - concurrent access issue?\n");
+        }
     }
 }
 
@@ -381,7 +414,10 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
             if (bufsize < 1) return;
 
             LOG_DEBUG("leds: %x\n", buffer[0]);
-            queue_add_or_panic(&leds_queue, buffer);
+            // LED queue is small (4 items) and low-frequency, use try_add
+            if (!queue_try_add(&leds_queue, buffer)) {
+                LOG_WARNING("LED queue full - dropping LED update\n");
+            }
         }
     }
 }
@@ -391,15 +427,35 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
 // Return zero will cause the stack to STALL request
 uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t *buffer,
                                uint16_t reqlen) {
-    // TODO not Implemented
     (void) instance;
-    (void) report_id;
-    (void) report_type;
-    (void) buffer;
-    (void) reqlen;
 
-    LOG_INFO("tud_hid_get_report_cb: %x %x %x\n", report_id, report_type, buffer[0]);
+    LOG_DEBUG("tud_hid_get_report_cb: instance=%x report_id=%x report_type=%x reqlen=%d\n",
+             instance, report_id, report_type, reqlen);
 
+    // For keyboard interface, return empty keyboard report when idle
+    if (report_type == HID_REPORT_TYPE_INPUT) {
+        if (report_id == ITF_NUM_KEYBOARD && reqlen >= sizeof(hid_keyboard_report_t)) {
+            hid_keyboard_report_t empty_report = {0};
+            memcpy(buffer, &empty_report, sizeof(hid_keyboard_report_t));
+            return sizeof(hid_keyboard_report_t);
+        }
+        // For mouse interface
+        else if (report_id == ITF_NUM_MOUSE && reqlen >= sizeof(hid_mouse_report_t)) {
+            hid_mouse_report_t empty_report = {0};
+            memcpy(buffer, &empty_report, sizeof(hid_mouse_report_t));
+            return sizeof(hid_mouse_report_t);
+        }
+    }
+    // For output reports (e.g., LED status), return current LED state
+    else if (report_type == HID_REPORT_TYPE_OUTPUT) {
+        if (report_id == ITF_NUM_KEYBOARD && reqlen >= 1) {
+            buffer[0] = current_led_state;
+            return 1;
+        }
+    }
+
+    // Unsupported report type/id - STALL the request
+    LOG_DEBUG("tud_hid_get_report_cb: Unsupported report_id=%x report_type=%x\n", report_id, report_type);
     return 0;
 }
 

@@ -69,7 +69,7 @@
 #define LWIP_IGMP                   1
 
 // Memory pool sizes - increase to avoid exhaustion with mDNS + HTTP + MQTT
-#define MEMP_NUM_SYS_TIMEOUT        (LWIP_NUM_SYS_TIMEOUT_INTERNAL + 2)  // Account for MQTT timers
+#define MEMP_NUM_SYS_TIMEOUT        20  // Increased for mDNS + HTTP + MQTT + TLS (was 16)
 #define MEMP_NUM_NETBUF             8   // Increase for HTTP POST handling
 #define MEMP_NUM_TCPIP_MSG_INPKT    16  // Increase for TLS message handling
 

@@ -56,6 +56,18 @@ void kvstore_clear_encryption_key(void);
  */
 bool kvstore_is_unlocked(void);
 
+/*! \brief Change password and re-encrypt all encrypted data
+ *
+ * This function:
+ * 1. Loads all encrypted keydefs using the OLD key
+ * 2. Updates the password hash with the NEW key
+ * 3. Re-saves all keydefs using the NEW key
+ *
+ * \param new_key 16-byte encryption key derived from new password via PBKDF2
+ * \return true on success, false on failure
+ */
+bool kvstore_change_password(const uint8_t new_key[16]);
+
 /*! \brief Store a value with encryption header
  *
  * Prepends a header byte indicating encryption status, then stores to kvstore.

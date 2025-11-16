@@ -11,6 +11,7 @@
 #include "pico.h"
 #include <stdio.h>
 #include "usb_host.h"
+#include "usb_descriptors.h"
 
 _Noreturn void core1_loop();
 
@@ -135,7 +136,7 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
 }
 
 void handle_mouse_report(hid_report_t *report) {
-    // Log, but otherwise send straight to the host.
+    // Log and forward mouse reports to host
     hid_mouse_report_t mouse = report->data.mouse;
     char l = mouse.buttons & MOUSE_BUTTON_LEFT ? 'L' : '-';
     char m = mouse.buttons & MOUSE_BUTTON_MIDDLE ? 'M' : '-';
@@ -144,7 +145,9 @@ void handle_mouse_report(hid_report_t *report) {
     (void) l; (void) m; (void) r;
 
     LOG_DEBUG("[%u] %c%c%c %4d %4d %4d\n", (*report).dev_addr, l, m, r, (*report).data.mouse.x, (*report).data.mouse.y, (*report).data.mouse.wheel);
-    // TODO add_to_host_queue(report->instance, REPORT_ID_MOUSE, len, &report->data);
+
+    // Forward mouse report to host (realtime - mouse movement must not block)
+    add_to_host_queue_realtime(report->instance, ITF_NUM_MOUSE, sizeof(hid_mouse_report_t), &report->data.mouse);
 }
 
 static void handle_generic_report(hid_report_t report) {
@@ -202,7 +205,8 @@ static void handle_generic_report(hid_report_t report) {
 
             default: {
                 LOG_ERROR("TODO - I don't think this is going to work\n");
-                add_to_host_queue(report.instance, 99, report.len, bytes);
+                // Generic HID passthrough - use realtime to avoid blocking
+                add_to_host_queue_realtime(report.instance, 99, report.len, bytes);
                 break;
             }
         }

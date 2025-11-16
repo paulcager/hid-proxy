@@ -260,6 +260,8 @@ static bool add_report(keydef_t* current_def, uint8_t mod, uint8_t key, void* li
     return true;
 }
 
+// DEPRECATED: Old store_t-based version - FOR TESTING ONLY
+// Use parse_macros_to_kvstore() in production code
 bool parse_macros(const char* input_buffer, store_t* temp_store) {
     const char* p = input_buffer;
     void* ptr = temp_store->keydefs;
@@ -751,7 +753,21 @@ bool serialize_macros_from_kvstore(char* output_buffer, size_t buffer_size) {
     return true;
 }
 
-// Helper for old store_t-based functions (deprecated)
+/*
+ * =============================================================================
+ * LEGACY/DEPRECATED FUNCTIONS - FOR TESTING ONLY
+ * =============================================================================
+ * The following functions use the old store_t flash storage format and are
+ * DEPRECATED for production use. They are kept only for unit tests that validate
+ * the macro parser/serializer logic without requiring kvstore initialization.
+ *
+ * Production code should use:
+ * - parse_macros_to_kvstore() instead of parse_macros()
+ * - serialize_macros_from_kvstore() instead of serialize_macros()
+ * =============================================================================
+ */
+
+// Helper for old store_t-based functions (DEPRECATED - for testing only)
 // Guard against redefinition when included in test files
 #ifndef MACROS_TEST_API_H
 static inline keydef_t *next_keydef(const keydef_t *this) {
@@ -761,7 +777,8 @@ static inline keydef_t *next_keydef(const keydef_t *this) {
 }
 #endif
 
-// Old store_t-based version (deprecated)
+// DEPRECATED: Old store_t-based version - FOR TESTING ONLY
+// Use serialize_macros_from_kvstore() in production code
 bool serialize_macros(const store_t* store, char* output_buffer, size_t buffer_size) {
     char* p = output_buffer;
     char* const limit = output_buffer + buffer_size;

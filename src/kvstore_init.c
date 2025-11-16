@@ -12,6 +12,7 @@
 #include "mbedtls/gcm.h"
 #include "pico/rand.h"
 #include "tinycrypt/sha256.h"
+#include "hid_proxy.h"  // For keydef_t and hid_keyboard_report_t
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -405,4 +406,150 @@ int kvstore_get_value(const char *key, void *buffer, size_t bufsize, size_t *act
 
     free(temp_buffer);
     return 0;
+}
+
+bool kvstore_change_password(const uint8_t new_key[16]) {
+    printf("kvstore_change_password: Starting password change...\n");
+
+    // Must be unlocked to change password
+    if (!device_unlocked || !encryption_key_available) {
+        printf("kvstore_change_password: Device must be unlocked to change password\n");
+        return false;
+    }
+
+    // Step 1: Load all encrypted keydefs using the OLD key
+    // First, find all keydefs
+    kvs_find_t ctx;
+    char key[64];
+    int ret = kvs_find("keydef.", &ctx);
+    if (ret != 0) {
+        printf("kvstore_change_password: No keydefs found or error: %s\n", kvs_strerror(ret));
+        // No keydefs to re-encrypt - just update password hash
+    }
+
+    // Count how many encrypted keydefs we have
+    typedef struct {
+        char key[64];
+        keydef_t *def;
+    } keydef_entry_t;
+
+    keydef_entry_t *keydefs = NULL;
+    size_t keydef_count = 0;
+    size_t keydef_capacity = 0;
+
+    if (ret == 0) {
+        while (kvs_find_next(&ctx, key, sizeof(key)) == 0) {
+            // Load keydef to check if encrypted
+            unsigned int trigger;
+            if (sscanf(key, "keydef.0x%X", &trigger) == 1) {
+                // Try to load it
+                size_t max_size = sizeof(keydef_t) + 64 * sizeof(hid_keyboard_report_t);
+                uint8_t *temp_buffer = (uint8_t *)malloc(max_size);
+                if (temp_buffer == NULL) {
+                    printf("kvstore_change_password: malloc failed\n");
+                    kvs_find_close(&ctx);
+                    goto cleanup_and_fail;
+                }
+
+                size_t actual_size;
+                bool is_encrypted;
+                int read_ret = kvstore_get_value(key, temp_buffer, max_size, &actual_size, &is_encrypted);
+
+                if (read_ret == 0 && is_encrypted) {
+                    // This is an encrypted keydef - save it for re-encryption
+                    printf("kvstore_change_password: Found encrypted keydef '%s'\n", key);
+
+                    // Grow array if needed
+                    if (keydef_count >= keydef_capacity) {
+                        keydef_capacity = keydef_capacity == 0 ? 8 : keydef_capacity * 2;
+                        keydef_entry_t *new_keydefs = (keydef_entry_t *)realloc(keydefs, keydef_capacity * sizeof(keydef_entry_t));
+                        if (new_keydefs == NULL) {
+                            printf("kvstore_change_password: realloc failed\n");
+                            free(temp_buffer);
+                            kvs_find_close(&ctx);
+                            goto cleanup_and_fail;
+                        }
+                        keydefs = new_keydefs;
+                    }
+
+                    // Store keydef
+                    strncpy(keydefs[keydef_count].key, key, sizeof(keydefs[keydef_count].key) - 1);
+                    keydefs[keydef_count].key[sizeof(keydefs[keydef_count].key) - 1] = '\0';
+
+                    keydefs[keydef_count].def = (keydef_t *)malloc(actual_size);
+                    if (keydefs[keydef_count].def == NULL) {
+                        printf("kvstore_change_password: malloc failed for keydef\n");
+                        free(temp_buffer);
+                        kvs_find_close(&ctx);
+                        goto cleanup_and_fail;
+                    }
+                    memcpy(keydefs[keydef_count].def, temp_buffer, actual_size);
+                    keydef_count++;
+                }
+
+                free(temp_buffer);
+            }
+        }
+        kvs_find_close(&ctx);
+    }
+
+    printf("kvstore_change_password: Found %zu encrypted keydefs to re-encrypt\n", keydef_count);
+
+    // Step 2: Update password hash with NEW key
+    struct tc_sha256_state_struct sha_ctx;
+    tc_sha256_init(&sha_ctx);
+    tc_sha256_update(&sha_ctx, new_key, 16);
+
+    uint8_t new_hash[TC_SHA256_DIGEST_SIZE];
+    tc_sha256_final(new_hash, &sha_ctx);
+
+    ret = kvstore_set_value(PASSWORD_HASH_KEY, new_hash, sizeof(new_hash), false);
+    if (ret != 0) {
+        printf("kvstore_change_password: Failed to update password hash: %s\n", kvs_strerror(ret));
+        goto cleanup_and_fail;
+    }
+
+    printf("kvstore_change_password: Password hash updated\n");
+
+    // Step 3: Update encryption key in memory
+    memcpy(encryption_key, new_key, 16);
+    encryption_key_available = true;
+    device_unlocked = true;
+
+    // Step 4: Re-encrypt all keydefs with NEW key
+    for (size_t i = 0; i < keydef_count; i++) {
+        printf("kvstore_change_password: Re-encrypting keydef '%s'\n", keydefs[i].key);
+
+        size_t size = sizeof(keydef_t) + keydefs[i].def->count * sizeof(hid_keyboard_report_t);
+        ret = kvstore_set_value(keydefs[i].key, keydefs[i].def, size, true);
+
+        if (ret != 0) {
+            printf("kvstore_change_password: Failed to re-encrypt keydef '%s': %s\n",
+                   keydefs[i].key, kvs_strerror(ret));
+            goto cleanup_and_fail;
+        }
+    }
+
+    printf("kvstore_change_password: Successfully re-encrypted %zu keydefs\n", keydef_count);
+
+    // Cleanup
+    for (size_t i = 0; i < keydef_count; i++) {
+        free(keydefs[i].def);
+    }
+    free(keydefs);
+
+    printf("kvstore_change_password: Password change complete\n");
+    return true;
+
+cleanup_and_fail:
+    // Cleanup on failure
+    for (size_t i = 0; i < keydef_count; i++) {
+        if (keydefs[i].def != NULL) {
+            free(keydefs[i].def);
+        }
+    }
+    free(keydefs);
+
+    printf("kvstore_change_password: Password change FAILED\n");
+    return false;
 }
