@@ -1,6 +1,5 @@
 //
-// Legacy flash functions - mostly obsolete with kvstore migration
-// Kept for compatibility during transition
+// Flash utility functions for device state management
 //
 
 #include <pico/flash.h>
@@ -9,25 +8,6 @@
 #include "kvstore_init.h"
 #include "kvstore.h"
 #include "keydef_store.h"
-
-// OBSOLETE: save_state() is no longer needed with kvstore
-// Individual keydefs are saved via keydef_save() on-demand
-// This stub is kept for backward compatibility with http_server.c
-void save_state(kb_t *kb) {
-    // With kvstore, keydefs are saved individually via keydef_save()
-    // This function is now a no-op
-    (void)kb;
-    LOG_INFO("save_state() is obsolete with kvstore migration\n");
-}
-
-// OBSOLETE: read_state() is no longer needed with kvstore
-// Keydefs are loaded on-demand via keydef_load()
-void read_state(kb_t *kb) {
-    // With kvstore, keydefs are loaded on-demand
-    // This function is now a no-op
-    (void)kb;
-    LOG_INFO("read_state() is obsolete with kvstore migration\n");
-}
 
 // Initialize device to blank/empty state
 // Clears all keydefs and encryption key

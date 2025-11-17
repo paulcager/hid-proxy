@@ -130,10 +130,6 @@ extern void update_status_led(void);
 
 extern void init_state(kb_t *kb);
 
-extern void save_state(kb_t *kb);
-
-extern void read_state(kb_t *kb);
-
 // Queue management functions
 extern void queue_add_with_backpressure(queue_t *q, const void *data);
 extern void queue_add_realtime(queue_t *q, const void *data);

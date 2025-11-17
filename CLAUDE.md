@@ -6,15 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a **proof-of-concept** USB HID proxy for Raspberry Pi Pico W that intercepts keyboard input between a physical keyboard and host computer. It provides encrypted storage of key definitions (text expansion/macros) in flash memory, with optional NFC tag authentication and WiFi-based configuration via HTTP API.
 
-**WARNING**: This is explicitly marked as "Do NOT use in production" with known security issues including lack of buffer overflow protection and basic encryption implementation.
-
 ## Board Support
 
 **Supported Hardware**:
 - Raspberry Pi Pico (RP2040, no WiFi)
 - Raspberry Pi Pico W (RP2040 with WiFi/HTTP)
-- Raspberry Pi Pico2 (RP2350, no WiFi) - **EXPERIMENTAL**
-- Raspberry Pi Pico2 W (RP2350 with WiFi/HTTP) - **EXPERIMENTAL**
+- Raspberry Pi Pico2 (RP2350, no WiFi)
+- Raspberry Pi Pico2 W (RP2350 with WiFi/HTTP)
 
 **Pico2 (RP2350) Status**: Build support is provided via Pico SDK 2.2.0, but PIO-USB compatibility is uncertain and depends on GPIO selection. The project uses GPIO2/3 for PIO-USB host stack. Test thoroughly before deployment.
 
@@ -65,7 +63,7 @@ On first use, any password is accepted and its hash is stored. Subsequent unlock
 
 **Encryption** (encryption.c/h): PBKDF2 (SHA256-based) key derivation from passphrase. The derived 16-byte key is used by kvstore_init.c for AES-128-GCM operations via mbedtls. Legacy `store_encrypt()`/`store_decrypt()` functions marked obsolete.
 
-**Flash Storage** (flash.c): Legacy file with backward-compatibility stubs. Functions like `save_state()` and `read_state()` are now no-ops; kvstore handles all persistence. `init_state()` clears kvstore and resets device to blank state.
+**Flash Storage** (flash.c): Minimal file containing only `init_state()` which clears kvstore and resets device to blank state. All persistence is handled by kvstore.
 
 **NFC Authentication** (nfc_tag.c): *Optional feature, disabled by default.* Interfaces with PN532 NFC reader via I2C (GPIO 4/5) to read/write 16-byte encryption keys from Mifare Classic tags. Supports multiple known authentication keys for tag access. Enable with `--nfc` build flag.
 
@@ -94,8 +92,8 @@ On first use, any password is accepted and its hash is stored. Subsequent unlock
 # Build for specific board
 ./build.sh --board pico         # RP2040, no WiFi
 ./build.sh --board pico_w       # RP2040 with WiFi (default)
-./build.sh --board pico2        # RP2350, no WiFi (EXPERIMENTAL)
-./build.sh --board pico2_w      # RP2350 with WiFi (EXPERIMENTAL)
+./build.sh --board pico2        # RP2350, no WiFi
+./build.sh --board pico2_w      # RP2350 with WiFi
 
 # Other options
 ./build.sh --stdio              # Enable USB CDC stdio for debugging
@@ -189,7 +187,7 @@ The text format for macros (used for HTTP/network configuration):
 - PBKDF2 key derivation: `enc_derive_key_from_password()` in encryption.c
 - Lock function: `lock()` in hid_proxy.c (clears encryption keys from memory, publishes MQTT event)
 - Unlock function: `unlock()` in hid_proxy.c (sets state to normal, publishes MQTT event)
-- Legacy stubs: `store_encrypt()`/`store_decrypt()` in encryption.c, `save_state()`/`read_state()` in flash.c
+- Legacy stubs: `store_encrypt()`/`store_decrypt()` in encryption.c (marked obsolete, kept for backward compatibility)
 - NFC state machine: `nfc_task()` in nfc_tag.c:373
 - USB host enumeration: `tuh_hid_mount_cb()` in usb_host.c:74
 - WiFi initialization: `wifi_init()` in wifi_config.c
@@ -219,16 +217,16 @@ The text format for macros (used for HTTP/network configuration):
 
 ## Known Issues/TODOs
 
-From README.md, code comments, and KVSTORE_STATUS.md:
+From README.md and code comments:
 1. ~~No buffer overflow protection on keystroke storage~~ ✅ Fixed: Keydef size limits enforced
 2. ~~Basic encryption implementation (not production-ready)~~ ✅ Fixed: Now uses AES-128-GCM with authentication and password validation
 3. ~~WiFi 10-second startup delay~~ ✅ Fixed: Removed
 4. ~~kb.local_store memory allocation~~ ✅ Fixed: Removed, keydefs loaded on-demand from kvstore
-5. Poor user interface with no status feedback (no visual feedback for lock/unlock state)
-6. Password change not implemented (must erase device to change password)
-7. HTTP POST /macros.txt not tested (code written but needs validation)
-8. Queue overflow handling needed (hid_proxy.c comment)
-9. Legacy code can be removed: sane.c, old parse_macros()/serialize_macros(), store_t struct
+5. ~~Password change not implemented~~ ✅ Fixed: kvstore_change_password() with full re-encryption
+6. ~~Queue overflow handling needed~~ ✅ Fixed: Backpressure for macros, graceful degradation for passthrough
+7. Poor user interface with no status feedback (no visual feedback for lock/unlock state)
+8. HTTP POST /macros.txt not tested (code written but needs validation)
+9. Legacy code can be removed: sane.c, old parse_macros()/serialize_macros(), store_t struct (kept for unit tests)
 
 ## WiFi/HTTP Configuration
 
@@ -260,8 +258,11 @@ curl http://hidproxy-XXXX.local/status
 ## Future Development
 
 See CONFIGURATION_OPTIONS.md for additional planned features:
-- Serial console for WiFi setup (currently requires manual flash programming or a .env file at build time)
+- ~~Serial console for WiFi setup~~ ✅ **Implemented**: Interactive WiFi config via UART (both-shifts+W)
 - ~~MQTT publishing of keystroke events to Home Assistant~~ ✅ **Implemented**: Lock/unlock events now published (see MQTT_SETUP.md)
+- ~~Password change support~~ ✅ **Implemented**: Full re-encryption with new password (both-shifts+INSERT)
+- ~~Mouse forwarding~~ ✅ **Implemented**: Mouse reports forwarded in passthrough mode
+- **Mouse macros**: Include mouse movements/clicks in key definitions (see MOUSE_SUPPORT.md for technical details)
 - MQTT publishing of all keystroke events (optional, privacy concerns)
 - MQTT configuration of macros (subscribe to config topic)
 - Simple web UI for in-browser macro editing

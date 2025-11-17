@@ -45,8 +45,8 @@ This document provides a quick reference for the completed migration from custom
 - **Defaults**: All new keydefs default to private (encrypted) for safety
 
 ### For Developers
-- `save_state()` / `read_state()` are now no-ops (legacy compatibility stubs)
-- `store_encrypt()` / `store_decrypt()` marked obsolete
+- `save_state()` / `read_state()` functions **removed** (no longer needed)
+- `store_encrypt()` / `store_decrypt()` marked obsolete (kept for backward compatibility)
 - Must call `kvstore_init()` at startup
 - Use new API: `keydef_save()`, `keydef_load()`, `keydef_delete()`, `keydef_list()`
 
