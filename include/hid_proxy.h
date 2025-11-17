@@ -88,12 +88,34 @@ inline const char *status_string(status_t s) {
     }
 }
 
-// Unified keydef structure (used by both kvstore and legacy flash parsing)
+// Action types for mixed macro sequences
+typedef enum {
+    ACTION_HID_REPORT = 0,   // Send keyboard HID report
+    ACTION_MQTT_PUBLISH,     // Publish MQTT message
+    ACTION_DELAY,            // Future: delay in milliseconds
+    ACTION_MOUSE_MOVE,       // Future: mouse movement
+} action_type_t;
+
+// Action data union - supports HID, MQTT, and future action types
+typedef struct {
+    action_type_t type;
+    union {
+        hid_keyboard_report_t hid;     // ACTION_HID_REPORT
+        struct {
+            char topic[64];
+            char message[64];
+        } mqtt;                         // ACTION_MQTT_PUBLISH
+        uint16_t delay_ms;              // ACTION_DELAY (future)
+        // Future: mouse movement data
+    } data;
+} action_t;
+
+// Unified keydef structure with mixed action types
 typedef struct keydef {
     uint8_t trigger;           // HID keycode that triggers this macro (was 'keycode')
-    uint16_t count;            // Number of HID reports in the sequence (was 'used')
-    bool require_unlock;       // Does this keydef require device unlock? (Phase 4)
-    hid_keyboard_report_t reports[0];  // Variable-length array of HID reports
+    uint16_t count;            // Number of actions in the sequence (was number of HID reports)
+    bool require_unlock;       // Does this keydef require device unlock?
+    action_t actions[0];       // Variable-length array of actions (was reports[])
 } keydef_t;
 
 /*

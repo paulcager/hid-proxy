@@ -206,6 +206,25 @@ void mqtt_publish_lock_state(bool locked) {
     }
 }
 
+void mqtt_publish_custom(const char *topic, const char *message) {
+    if (!mqtt_state.connected || !mqtt_state.client) {
+        LOG_WARNING("MQTT not connected, skipping publish to %s\n", topic);
+        return;
+    }
+
+    LOG_INFO("Publishing MQTT (custom): %s = %s\n", topic, message);
+
+    cyw43_arch_lwip_begin();
+    err_t err = mqtt_publish(mqtt_state.client, topic, message, strlen(message),
+                            MQTT_QOS, 0,  // QoS 1, no retain for custom messages
+                            mqtt_pub_request_cb, NULL);
+    cyw43_arch_lwip_end();
+
+    if (err != ERR_OK) {
+        LOG_ERROR("MQTT custom publish failed: %d\n", err);
+    }
+}
+
 void mqtt_client_task(void) {
     // Nothing to do here - MQTT runs in lwIP callbacks
     // This function exists for future expansion if needed

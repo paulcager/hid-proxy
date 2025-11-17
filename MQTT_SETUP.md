@@ -2,11 +2,12 @@
 
 ## Overview
 
-The HID Proxy now supports publishing lock/unlock events to an MQTT broker, enabling integration with Home Assistant and other home automation systems. MQTT can be configured with optional TLS for secure communication.
+The HID Proxy supports publishing MQTT messages for home automation integration. This includes automatic lock/unlock events and **custom MQTT publishes from keydefs** to trigger Home Assistant automations (lights, scenes, scripts, etc.).
 
 ## Features
 
 - **Lock/Unlock Events**: Publishes device state changes to MQTT topics
+- **Keydef MQTT Actions**: Trigger automations with `MQTT("topic", "message")` in macros
 - **Status Reporting**: Online/offline status via Last Will and Testament (LWT)
 - **Optional TLS**: Secure MQTT connections to local brokers
 - **Unique Device IDs**: Uses last 2 hex digits of board ID for topic names
@@ -146,6 +147,75 @@ automation:
           message: "HID Proxy will lock in 5 minutes"
       # Note: Actual locking must be done physically or via HTTP POST /lock
 ```
+
+## Using MQTT in Keydefs
+
+You can trigger Home Assistant automations directly from keyboard macros using the `MQTT()` action.
+
+### Syntax
+
+```
+[public|private] key { MQTT("topic", "message") }
+```
+
+### Examples
+
+**Turn on bedroom light:**
+```
+[public] F5 { MQTT("hidproxy/light/bedroom", "ON") }
+[public] F6 { MQTT("hidproxy/light/bedroom", "OFF") }
+```
+
+**Activate Home Assistant scene:**
+```
+[public] F7 { MQTT("homeassistant/scene/activate", "movie_time") }
+[public] F8 { MQTT("homeassistant/scene/activate", "goodnight") }
+```
+
+**Combined keyboard + automation:**
+```
+[public] F9 { "Activating movie mode..." ENTER MQTT("homeassistant/scene", "movie") }
+```
+
+**Toggle switch:**
+```
+[public] F10 { MQTT("homeassistant/switch/living_room/set", "toggle") }
+```
+
+### Home Assistant Integration
+
+To receive these custom MQTT messages in Home Assistant, create an automation:
+
+```yaml
+automation:
+  - alias: "Bedroom Light via HID Proxy"
+    trigger:
+      - platform: mqtt
+        topic: "hidproxy/light/bedroom"
+    action:
+      - service: light.turn_{{ trigger.payload | lower }}
+        target:
+          entity_id: light.bedroom
+```
+
+Or use MQTT switches/lights directly:
+
+```yaml
+light:
+  - platform: mqtt
+    name: "Bedroom Light"
+    command_topic: "hidproxy/light/bedroom"
+    payload_on: "ON"
+    payload_off: "OFF"
+```
+
+### Notes
+
+- MQTT actions require WiFi and MQTT broker to be configured
+- If MQTT is not connected, the action is skipped with a warning log
+- Topic and message strings are limited to 63 characters each
+- MQTT actions work in both public and private keydefs
+- Can mix MQTT with keyboard actions in the same macro
 
 ## Troubleshooting
 

@@ -6,6 +6,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a **proof-of-concept** USB HID proxy for Raspberry Pi Pico W that intercepts keyboard input between a physical keyboard and host computer. It provides encrypted storage of key definitions (text expansion/macros) in flash memory, with optional NFC tag authentication and WiFi-based configuration via HTTP API.
 
+**IMPORTANT: Backward Compatibility Policy**
+
+This is a personal project with a single user. **Backward compatibility is NOT required.** Breaking changes to storage formats, keydef structures, or configuration are acceptable. Users can always wipe the device (both-shifts + DEL) and reconfigure from scratch. When implementing new features:
+
+- ✅ **DO**: Make clean architectural changes that improve the codebase
+- ✅ **DO**: Change storage formats if it makes the design better
+- ✅ **DO**: Break APIs between firmware versions
+- ❌ **DON'T**: Add complexity just to maintain backward compatibility
+- ❌ **DON'T**: Keep migration code after initial implementation
+
+When making breaking changes, simply document in MIGRATION_NOTES.md that users should wipe and reconfigure.
+
 ## Board Support
 
 **Supported Hardware**:
@@ -39,9 +51,17 @@ Communication between cores uses three queues:
 - `seen_magic`/`expecting_command`: "Double shift" command mode activated
 - `defining`: Recording new key definition
 
-**Key Definitions** (key_defs.c): Stores mappings from single keystrokes to sequences of HID reports. Definitions are loaded on-demand from kvstore as individual `keydef_t` structures.
+**Key Definitions** (key_defs.c): Stores mappings from single keystrokes to sequences of **mixed actions** (HID reports, MQTT publishes, delays, mouse movements). Definitions are loaded on-demand from kvstore as individual `keydef_t` structures.
 
-**Macro Parsing/Serialization** (macros.c/h): Provides text format parser and serializer to convert between binary keydef format and human-readable text format with syntax: `[public|private] trigger { "text" MNEMONIC ^C [mod:key] }`. Used for HTTP-based configuration via `/macros.txt` endpoint.
+**Action System** (hid_proxy.h): Keydefs use an extensible action-based architecture:
+- `ACTION_HID_REPORT`: Send keyboard HID report to host
+- `ACTION_MQTT_PUBLISH`: Publish message to MQTT broker (WiFi boards only)
+- `ACTION_DELAY`: Delay in milliseconds (future)
+- `ACTION_MOUSE_MOVE`: Mouse movement/clicks (future, see MOUSE_SUPPORT.md)
+
+Each keydef contains an array of `action_t` structures, allowing macros to mix keyboard input with MQTT automation, delays, and future mouse actions.
+
+**Macro Parsing/Serialization** (macros.c/h): Provides text format parser and serializer to convert between binary keydef format and human-readable text format with syntax: `[public|private] trigger { "text" MNEMONIC ^C MQTT("topic", "msg") [mod:key] }`. Used for HTTP-based configuration via `/macros.txt` endpoint.
 
 **Storage** (kvstore_init.c, keydef_store.c): Uses pico-kvstore for persistent storage with encryption:
 - blockdevice_flash: Raw flash access with wear leveling
@@ -153,23 +173,26 @@ These commands activate while holding both shift keys (not released):
 ## Macro Text Format
 
 The text format for macros (used for HTTP/network configuration):
-- `[public|private] trigger { commands... }` - whitespace flexible
+- `[public|private] trigger { actions... }` - whitespace flexible
 - `[public]` - keydef works even when device is locked (no sensitive data)
 - `[private]` - keydef requires device unlock (default, for passwords/secrets)
 - `"text"` - quoted strings for typing (supports `\"` and `\\` escapes)
 - `MNEMONIC` - special keys (ENTER, ESC, TAB, F1-F24, arrows, PAGEUP, etc.)
 - `^C` - Ctrl+key shorthand (^A through ^Z)
 - `[mod:key]` - explicit HID report in hex
+- `MQTT("topic", "message")` - publish MQTT message (requires WiFi/MQTT configured)
 - Triggers: single char (`a`), mnemonic (`F1`), or hex (`0x04`)
 
-**Example:**
+**Examples:**
 ```
 [public] a { "Hello!" }
 [private] F1 { "MyPassword123" ENTER }
 [public] F2 { ^C "text" ^V }
+[public] F5 { MQTT("hidproxy/light/bedroom", "ON") }
+[public] F6 { "Lights off" ENTER MQTT("homeassistant/scene", "sleep") }
 ```
 
-**Note:** Public keydefs can be executed when the device is locked (via double-shift + key), while private keydefs require the device to be unlocked first.
+**Note:** Public keydefs can be executed when the device is locked (via double-shift + key), while private keydefs require the device to be unlocked first. MQTT actions require WiFi and MQTT broker configuration (see MQTT_SETUP.md).
 
 ## Important Code Locations
 

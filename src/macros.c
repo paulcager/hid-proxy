@@ -246,16 +246,31 @@ static uint8_t parse_trigger(const char** p) {
     return lookup_mnemonic_keycode(mnemonic);
 }
 
-// Add a report to the current definition
+// Add a HID report action to the current definition
 static bool add_report(keydef_t* current_def, uint8_t mod, uint8_t key, void* limit) {
-    if ((void*)&current_def->reports[current_def->count + 1] >= limit) {
+    if ((void*)&current_def->actions[current_def->count + 1] >= limit) {
         return false;
     }
-    current_def->reports[current_def->count].modifier = mod;
-    current_def->reports[current_def->count].keycode[0] = key;
+    current_def->actions[current_def->count].type = ACTION_HID_REPORT;
+    current_def->actions[current_def->count].data.hid.modifier = mod;
+    current_def->actions[current_def->count].data.hid.keycode[0] = key;
     for (int i = 1; i < 6; i++) {
-        current_def->reports[current_def->count].keycode[i] = 0;
+        current_def->actions[current_def->count].data.hid.keycode[i] = 0;
     }
+    current_def->count++;
+    return true;
+}
+
+// Add an MQTT publish action to the current definition
+static bool add_mqtt_action(keydef_t* current_def, const char* topic, const char* message, void* limit) {
+    if ((void*)&current_def->actions[current_def->count + 1] >= limit) {
+        return false;
+    }
+    current_def->actions[current_def->count].type = ACTION_MQTT_PUBLISH;
+    strncpy(current_def->actions[current_def->count].data.mqtt.topic, topic, 63);
+    current_def->actions[current_def->count].data.mqtt.topic[63] = '\0';
+    strncpy(current_def->actions[current_def->count].data.mqtt.message, message, 63);
+    current_def->actions[current_def->count].data.mqtt.message[63] = '\0';
     current_def->count++;
     return true;
 }
@@ -557,10 +572,10 @@ bool parse_macros_to_kvstore(const char* input_buffer) {
                 }
 
             } else {
-                // Mnemonic
+                // Mnemonic or MQTT command
                 char mnemonic[32];
                 int i = 0;
-                while (*p && !isspace((unsigned char)*p) && *p != '}' && *p != '"' && *p != '^' && *p != '[' && i < 31) {
+                while (*p && !isspace((unsigned char)*p) && *p != '}' && *p != '"' && *p != '^' && *p != '[' && *p != '(' && i < 31) {
                     mnemonic[i] = *p;
                     i++;
                     p++;
@@ -568,12 +583,64 @@ bool parse_macros_to_kvstore(const char* input_buffer) {
                 mnemonic[i] = '\0';
 
                 if (i > 0) {
-                    uint8_t key = lookup_mnemonic_keycode(mnemonic);
-                    if (key) {
-                        if (!add_report(def, 0x00, key, limit)) {
-                            printf("parse_macros_to_kvstore: Buffer overflow\n");
+                    // Check for MQTT command: MQTT("topic", "message")
+                    if (strcmp(mnemonic, "MQTT") == 0 && *p == '(') {
+                        p++; // Skip '('
+                        while (*p && isspace((unsigned char)*p)) p++; // Skip whitespace
+
+                        // Parse topic string
+                        char topic[64] = {0};
+                        if (*p == '"') {
+                            p++; // Skip opening quote
+                            int topic_len = 0;
+                            while (*p && *p != '"' && topic_len < 63) {
+                                if (*p == '\\' && p[1]) {
+                                    p++; // Skip escape character
+                                }
+                                topic[topic_len++] = *p++;
+                            }
+                            topic[topic_len] = '\0';
+                            if (*p == '"') p++; // Skip closing quote
+                        }
+
+                        while (*p && isspace((unsigned char)*p)) p++; // Skip whitespace
+                        if (*p == ',') p++; // Skip comma
+                        while (*p && isspace((unsigned char)*p)) p++; // Skip whitespace
+
+                        // Parse message string
+                        char message[64] = {0};
+                        if (*p == '"') {
+                            p++; // Skip opening quote
+                            int msg_len = 0;
+                            while (*p && *p != '"' && msg_len < 63) {
+                                if (*p == '\\' && p[1]) {
+                                    p++; // Skip escape character
+                                }
+                                message[msg_len++] = *p++;
+                            }
+                            message[msg_len] = '\0';
+                            if (*p == '"') p++; // Skip closing quote
+                        }
+
+                        while (*p && isspace((unsigned char)*p)) p++; // Skip whitespace
+                        if (*p == ')') p++; // Skip closing paren
+
+                        // Add MQTT action
+                        if (!add_mqtt_action(def, topic, message, limit)) {
+                            printf("parse_macros_to_kvstore: Buffer overflow adding MQTT action\n");
                             free(def);
                             return false;
+                        }
+                        printf("parse_macros_to_kvstore: Added MQTT action: topic='%s' msg='%s'\n", topic, message);
+                    } else {
+                        // Regular mnemonic (keycode)
+                        uint8_t key = lookup_mnemonic_keycode(mnemonic);
+                        if (key) {
+                            if (!add_report(def, 0x00, key, limit)) {
+                                printf("parse_macros_to_kvstore: Buffer overflow\n");
+                                free(def);
+                                return false;
+                            }
                         }
                     }
                 }
@@ -664,9 +731,11 @@ bool serialize_macros_from_kvstore(char* output_buffer, size_t buffer_size) {
 
             // Look for text sequences: press with ASCII, then release
             while (i + 1 < def->count &&
-                   def->reports[i + 1].modifier == 0 &&
-                   def->reports[i + 1].keycode[0] == 0) {
-                char ch = keycode_to_ascii(def->reports[i].keycode[0], def->reports[i].modifier);
+                   def->actions[i].type == ACTION_HID_REPORT &&
+                   def->actions[i + 1].type == ACTION_HID_REPORT &&
+                   def->actions[i + 1].data.hid.modifier == 0 &&
+                   def->actions[i + 1].data.hid.keycode[0] == 0) {
+                char ch = keycode_to_ascii(def->actions[i].data.hid.keycode[0], def->actions[i].data.hid.modifier);
                 if (ch >= 32 && ch <= 126) {
                     is_text_sequence = true;
                     text_len++;
@@ -687,7 +756,7 @@ bool serialize_macros_from_kvstore(char* output_buffer, size_t buffer_size) {
                 p += written;
 
                 for (int j = text_start; j < text_start + text_len * 2; j += 2) {
-                    char ch = keycode_to_ascii(def->reports[j].keycode[0], def->reports[j].modifier);
+                    char ch = keycode_to_ascii(def->actions[j].data.hid.keycode[0], def->actions[j].data.hid.modifier);
                     if (ch == '"' || ch == '\\') {
                         written = snprintf(p, limit - p, "\\%c", ch);
                     } else {
@@ -708,9 +777,9 @@ bool serialize_macros_from_kvstore(char* output_buffer, size_t buffer_size) {
                     return false;
                 }
                 p += written;
-            } else {
+            } else if (def->actions[i].type == ACTION_HID_REPORT) {
                 // Output as raw report or mnemonic or ^X notation
-                const hid_keyboard_report_t* rep = &def->reports[i];
+                const hid_keyboard_report_t* rep = &def->actions[i].data.hid;
 
                 // Check for Ctrl+key shorthand
                 if (rep->modifier == 0x01 && rep->keycode[0] >= 0x04 && rep->keycode[0] <= 0x1d) {
@@ -734,6 +803,23 @@ bool serialize_macros_from_kvstore(char* output_buffer, size_t buffer_size) {
                     return false;
                 }
                 p += written;
+                i++;
+            } else if (def->actions[i].type == ACTION_MQTT_PUBLISH) {
+                // Output MQTT action
+                written = snprintf(p, limit - p, "MQTT(\"%s\", \"%s\") ",
+                                 def->actions[i].data.mqtt.topic,
+                                 def->actions[i].data.mqtt.message);
+                if (written < 0 || p + written >= limit) {
+                    printf("serialize_macros_from_kvstore: Buffer overflow\n");
+                    free(def);
+                    return false;
+                }
+                p += written;
+                i++;
+            } else {
+                // Unknown action type, skip it
+                printf("serialize_macros_from_kvstore: Unknown action type %d, skipping\n",
+                      def->actions[i].type);
                 i++;
             }
         }
@@ -772,7 +858,7 @@ bool serialize_macros_from_kvstore(char* output_buffer, size_t buffer_size) {
 #ifndef MACROS_TEST_API_H
 static inline keydef_t *next_keydef(const keydef_t *this) {
     const void *t = this;
-    t += sizeof(keydef_t) + (this->count * sizeof(hid_keyboard_report_t));
+    t += sizeof(keydef_t) + (this->count * sizeof(action_t));
     return (keydef_t*)t;
 }
 #endif
@@ -819,9 +905,11 @@ bool serialize_macros(const store_t* store, char* output_buffer, size_t buffer_s
 
             // Look for text sequences: press with ASCII, then release
             while (i + 1 < def->count &&
-                   def->reports[i + 1].modifier == 0 &&
-                   def->reports[i + 1].keycode[0] == 0) {
-                char ch = keycode_to_ascii(def->reports[i].keycode[0], def->reports[i].modifier);
+                   def->actions[i].type == ACTION_HID_REPORT &&
+                   def->actions[i + 1].type == ACTION_HID_REPORT &&
+                   def->actions[i + 1].data.hid.modifier == 0 &&
+                   def->actions[i + 1].data.hid.keycode[0] == 0) {
+                char ch = keycode_to_ascii(def->actions[i].data.hid.keycode[0], def->actions[i].data.hid.modifier);
                 if (ch >= 32 && ch <= 126) {
                     is_text_sequence = true;
                     text_len++;
@@ -838,7 +926,7 @@ bool serialize_macros(const store_t* store, char* output_buffer, size_t buffer_s
                 p += written;
 
                 for (int j = text_start; j < text_start + text_len * 2; j += 2) {
-                    char ch = keycode_to_ascii(def->reports[j].keycode[0], def->reports[j].modifier);
+                    char ch = keycode_to_ascii(def->actions[j].data.hid.keycode[0], def->actions[j].data.hid.modifier);
                     if (ch == '"' || ch == '\\') {
                         written = snprintf(p, limit - p, "\\%c", ch);
                     } else {
@@ -851,9 +939,9 @@ bool serialize_macros(const store_t* store, char* output_buffer, size_t buffer_s
                 written = snprintf(p, limit - p, "\" ");
                 if (written < 0 || p + written >= limit) panic("Buffer overflow in serializer");
                 p += written;
-            } else {
+            } else if (def->actions[i].type == ACTION_HID_REPORT) {
                 // Output as raw report or mnemonic or ^X notation
-                const hid_keyboard_report_t* rep = &def->reports[i];
+                const hid_keyboard_report_t* rep = &def->actions[i].data.hid;
 
                 // Check for Ctrl+key shorthand
                 if (rep->modifier == 0x01 && rep->keycode[0] >= 0x04 && rep->keycode[0] <= 0x1d) {
@@ -873,6 +961,17 @@ bool serialize_macros(const store_t* store, char* output_buffer, size_t buffer_s
 
                 if (written < 0 || p + written >= limit) panic("Buffer overflow in serializer");
                 p += written;
+                i++;
+            } else if (def->actions[i].type == ACTION_MQTT_PUBLISH) {
+                // Output MQTT action
+                written = snprintf(p, limit - p, "MQTT(\"%s\", \"%s\") ",
+                                 def->actions[i].data.mqtt.topic,
+                                 def->actions[i].data.mqtt.message);
+                if (written < 0 || p + written >= limit) panic("Buffer overflow in serializer");
+                p += written;
+                i++;
+            } else {
+                // Unknown action type, skip
                 i++;
             }
         }

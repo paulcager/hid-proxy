@@ -15,6 +15,7 @@
 #ifdef PICO_CYW43_SUPPORTED
 #include "wifi_config.h"
 #include "wifi_console.h"
+#include "mqtt_client.h"
 #endif
 
 static hid_keyboard_report_t release_all_keys = {0, 0, {0, 0, 0, 0, 0, 0}};
@@ -324,12 +325,14 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
             // Check if we have space in the allocated buffer
             // The buffer was allocated with initial capacity, check if we need to grow it
             if (this_def->count >= 64) {
-                LOG_ERROR("Maximum macro length reached (%d reports) for keycode %02x. Ignoring report.\n",
+                LOG_ERROR("Maximum macro length reached (%d actions) for keycode %02x. Ignoring action.\n",
                          this_def->count, this_def->trigger);
-                return; // Ignore the report to prevent overflow
+                return; // Ignore the action to prevent overflow
             }
 
-            this_def->reports[this_def->count] = *kb_report;
+            // Record as HID action (interactive definition only records keyboard input)
+            this_def->actions[this_def->count].type = ACTION_HID_REPORT;
+            this_def->actions[this_def->count].data.hid = *kb_report;
             this_def->count++;
             print_keydef(this_def);
     }
@@ -371,15 +374,43 @@ void evaluate_keydef(hid_keyboard_report_t *report, uint8_t key0) {
         return;
     }
 
-    printf("evaluate_keydef: Executing keycode 0x%02X with %d sequences (%s)\n",
+    printf("evaluate_keydef: Executing keycode 0x%02X with %d actions (%s)\n",
            key0, def->count, def->require_unlock ? "PRIVATE" : "PUBLIC");
 
-    // Send the macro sequence
+    // Execute the macro action sequence
     add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t),&release_all_keys);
     for (int i = 0; i < def->count; i++) {
-        hid_keyboard_report_t next_report = def->reports[i];
-        LOG_TRACE("> %x %x\n", next_report.modifier, next_report.keycode[0]);
-        add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t),&next_report);
+        action_t *action = &def->actions[i];
+
+        switch (action->type) {
+            case ACTION_HID_REPORT:
+                LOG_TRACE("> HID %x %x\n", action->data.hid.modifier, action->data.hid.keycode[0]);
+                add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), &action->data.hid);
+                break;
+
+            case ACTION_MQTT_PUBLISH:
+#ifdef PICO_CYW43_SUPPORTED
+                LOG_INFO("> MQTT %s = %s\n", action->data.mqtt.topic, action->data.mqtt.message);
+                mqtt_publish_custom(action->data.mqtt.topic, action->data.mqtt.message);
+#else
+                LOG_WARNING("> MQTT action skipped (WiFi not supported)\n");
+#endif
+                break;
+
+            case ACTION_DELAY:
+                // Future implementation
+                LOG_WARNING("> DELAY action not yet implemented\n");
+                break;
+
+            case ACTION_MOUSE_MOVE:
+                // Future implementation
+                LOG_WARNING("> MOUSE_MOVE action not yet implemented\n");
+                break;
+
+            default:
+                LOG_ERROR("> Unknown action type: %d\n", action->type);
+                break;
+        }
     }
 
     // Free the loaded keydef
@@ -455,10 +486,28 @@ void print_keydefs() {
 }
 
 void print_keydef(const keydef_t *def) {
-    printf("%02x @%p: count = %d\n", def->trigger, def, def->count);
+    printf("%02x @%p: count = %d actions\n", def->trigger, def, def->count);
     for (int i = 0; i < def->count; i++) {
         printf("> %3d ", i);
-        print_key_report(&(def->reports[i]));
+        action_t *action = (action_t*)&def->actions[i];
+        switch (action->type) {
+            case ACTION_HID_REPORT:
+                printf("HID: ");
+                print_key_report(&action->data.hid);
+                break;
+            case ACTION_MQTT_PUBLISH:
+                printf("MQTT: topic='%s' msg='%s'\n", action->data.mqtt.topic, action->data.mqtt.message);
+                break;
+            case ACTION_DELAY:
+                printf("DELAY: %u ms\n", action->data.delay_ms);
+                break;
+            case ACTION_MOUSE_MOVE:
+                printf("MOUSE_MOVE: (not yet implemented)\n");
+                break;
+            default:
+                printf("UNKNOWN ACTION TYPE: %d\n", action->type);
+                break;
+        }
     }
     printf("--------------\n");
 }

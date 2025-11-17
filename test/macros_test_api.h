@@ -9,7 +9,7 @@
 
 // Helper to navigate variable-length keydef array
 static inline keydef_t *next_keydef(const keydef_t *this) {
-    return (keydef_t*)((uint8_t*)this + sizeof(keydef_t) + this->count * sizeof(hid_keyboard_report_t));
+    return (keydef_t*)((uint8_t*)this + sizeof(keydef_t) + this->count * sizeof(action_t));
 }
 
 // Old API functions for testing
