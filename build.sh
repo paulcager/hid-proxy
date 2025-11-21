@@ -28,7 +28,7 @@ OPTIONS:
     -i, --interactive   Open interactive shell in Docker container
     -l, --local         Use local toolchain instead of Docker
     -d, --debug         Build with debug symbols
-    -b, --board BOARD   Target board: pico, pico_w, pico2, pico2_w (default: pico_w)
+    -b, --board BOARD   Target board: pico, pico_w, pico2, pico2_w, ws_2350 (default: pico_w)
     -s, --stdio         Enable USB CDC stdio for debugging (printf over USB)
     -n, --nfc           Enable NFC tag authentication support
 
@@ -43,13 +43,15 @@ EXAMPLES:
     ./build.sh --local --board pico # Use local toolchain for regular Pico
 
 BOARD OPTIONS:
-    pico_w      Raspberry Pi Pico W (RP2040 with WiFi/HTTP) - DEFAULT
-    pico        Raspberry Pi Pico (RP2040, WiFi disabled, smaller binary)
-    pico2_w     Raspberry Pi Pico2 W (RP2350 with WiFi/HTTP)
-    pico2       Raspberry Pi Pico2 (RP2350, WiFi disabled, smaller binary)
+    pico_w      Raspberry Pi Pico W (RP2040 with WiFi/HTTP) - DEFAULT [WORKING]
+    pico        Raspberry Pi Pico (RP2040, WiFi disabled, smaller binary) [WORKING]
+    pico2_w     Raspberry Pi Pico2 W (RP2350 with WiFi/HTTP) [NOT WORKING]
+    pico2       Raspberry Pi Pico2 (RP2350, WiFi disabled) [NOT WORKING]
+    ws_2350     Waveshare RP2350-USB-A (RP2350, USB-A host, RGB LED) [NOT WORKING]
 
-    NOTE: Pico2 (RP2350) support is experimental. PIO-USB compatibility
-          depends on GPIO selection. Test thoroughly before production use.
+    WARNING: RP2350 boards are NOT CURRENTLY FUNCTIONAL. USB keyboards are
+             not detected due to PIO-USB compatibility issues (possible RP2350B
+             silicon bug or library incompatibility). Use RP2040 boards only.
 
 DEBUG OPTIONS:
     --stdio     Enable USB CDC stdio (printf/scanf over USB serial)
@@ -93,8 +95,8 @@ while [[ $# -gt 0 ]]; do
             ;;
         -b|--board)
             BOARD="$2"
-            if [[ "$BOARD" != "pico" && "$BOARD" != "pico_w" && "$BOARD" != "pico2" && "$BOARD" != "pico2_w" ]]; then
-                echo -e "${RED}Error: Invalid board '$BOARD'. Must be 'pico', 'pico_w', 'pico2', or 'pico2_w'${NC}"
+            if [[ "$BOARD" != "pico" && "$BOARD" != "pico_w" && "$BOARD" != "pico2" && "$BOARD" != "pico2_w" && "$BOARD" != "ws_2350" ]]; then
+                echo -e "${RED}Error: Invalid board '$BOARD'. Must be 'pico', 'pico_w', 'pico2', 'pico2_w', or 'ws_2350'${NC}"
                 exit 1
             fi
             shift 2
@@ -177,6 +179,16 @@ if [[ "$USE_DOCKER" == true ]]; then
 
     echo -e "${GREEN}Building with Docker...${NC}"
 
+    # Warn if building for RP2350 (non-functional)
+    if [[ "$BOARD" == "pico2" || "$BOARD" == "pico2_w" || "$BOARD" == "ws_2350" ]]; then
+        echo -e "${YELLOW}════════════════════════════════════════════════════════════════${NC}"
+        echo -e "${YELLOW}WARNING: Building for RP2350 board (NOT CURRENTLY FUNCTIONAL)${NC}"
+        echo -e "${YELLOW}USB keyboards are not detected on RP2350 due to PIO-USB issues.${NC}"
+        echo -e "${YELLOW}Use RP2040 boards (pico, pico_w) for working deployments.${NC}"
+        echo -e "${YELLOW}════════════════════════════════════════════════════════════════${NC}"
+        echo ""
+    fi
+
     # Build the Docker image if it doesn't exist
     if [[ -z "$(docker images -q pico-bld 2> /dev/null)" ]]; then
         echo -e "${YELLOW}Building Docker image (this may take 5-10 minutes on first run)...${NC}"
@@ -185,7 +197,12 @@ if [[ "$USE_DOCKER" == true ]]; then
     fi
 
     # Prepare CMake flags
-    CMAKE_FLAGS="-DPICO_BOARD=$BOARD"
+    # Map ws_2350 to pico2 board for CMake (RP2350 without WiFi)
+    if [[ "$BOARD" == "ws_2350" ]]; then
+        CMAKE_FLAGS="-DPICO_BOARD=pico2 -DBOARD_WS_2350=ON"
+    else
+        CMAKE_FLAGS="-DPICO_BOARD=$BOARD"
+    fi
     if [[ "$BUILD_TYPE" == "debug" ]]; then
         CMAKE_FLAGS="$CMAKE_FLAGS -DCMAKE_BUILD_TYPE=Debug"
         echo -e "${YELLOW}Debug build enabled (no optimization, debug symbols)${NC}"
@@ -211,8 +228,23 @@ else
 
     echo -e "${GREEN}Building with local toolchain...${NC}"
 
+    # Warn if building for RP2350 (non-functional)
+    if [[ "$BOARD" == "pico2" || "$BOARD" == "pico2_w" || "$BOARD" == "ws_2350" ]]; then
+        echo -e "${YELLOW}════════════════════════════════════════════════════════════════${NC}"
+        echo -e "${YELLOW}WARNING: Building for RP2350 board (NOT CURRENTLY FUNCTIONAL)${NC}"
+        echo -e "${YELLOW}USB keyboards are not detected on RP2350 due to PIO-USB issues.${NC}"
+        echo -e "${YELLOW}Use RP2040 boards (pico, pico_w) for working deployments.${NC}"
+        echo -e "${YELLOW}════════════════════════════════════════════════════════════════${NC}"
+        echo ""
+    fi
+
     # Prepare CMake flags
-    CMAKE_FLAGS="-DPICO_BOARD=$BOARD"
+    # Map ws_2350 to pico2 board for CMake (RP2350 without WiFi)
+    if [[ "$BOARD" == "ws_2350" ]]; then
+        CMAKE_FLAGS="-DPICO_BOARD=pico2 -DBOARD_WS_2350=ON"
+    else
+        CMAKE_FLAGS="-DPICO_BOARD=$BOARD"
+    fi
     if [[ "$BUILD_TYPE" == "debug" ]]; then
         CMAKE_FLAGS="$CMAKE_FLAGS -DCMAKE_BUILD_TYPE=Debug"
         echo -e "${YELLOW}Debug build enabled (no optimization, debug symbols)${NC}"
@@ -249,10 +281,16 @@ if [[ -f "build/hid_proxy.uf2" ]]; then
         echo "Features: WiFi disabled (regular Pico)"
     elif [[ "$BOARD" == "pico2_w" ]]; then
         echo "Platform: RP2350"
-        echo "Features: WiFi/HTTP enabled (EXPERIMENTAL - test PIO-USB)"
+        echo "Features: WiFi/HTTP enabled"
+        echo "Status: ⚠️  NOT WORKING - PIO-USB issues"
     elif [[ "$BOARD" == "pico2" ]]; then
         echo "Platform: RP2350"
-        echo "Features: WiFi disabled (EXPERIMENTAL - test PIO-USB)"
+        echo "Features: WiFi disabled"
+        echo "Status: ⚠️  NOT WORKING - PIO-USB issues"
+    elif [[ "$BOARD" == "ws_2350" ]]; then
+        echo "Platform: RP2350 (Waveshare RP2350-USB-A)"
+        echo "Features: WiFi disabled, USB-A host port (GPIO12/13), RGB LED (GPIO16)"
+        echo "Status: ⚠️  NOT WORKING - PIO-USB issues"
     fi
     if [[ "$ENABLE_USB_STDIO" == true ]]; then
         echo "Debug: USB CDC stdio enabled (10s WiFi startup delay)"

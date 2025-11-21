@@ -25,6 +25,10 @@ static struct {
     tuh_hid_report_info_t report_info[MAX_REPORT];
 } hid_info[CFG_TUH_HID];
 
+// Debug: track if any USB device has ever been detected
+volatile bool usb_device_ever_mounted = false;
+volatile uint32_t usb_mount_count = 0;
+
 
 
 // core1: handle host events
@@ -43,8 +47,14 @@ void core1_main() {
 
     LOG_INFO("Core 1: Configuring PIO-USB\n");
     pio_usb_configuration_t pio_cfg = PIO_USB_DEFAULT_CONFIG;
-    // Use GPIO2/3 for USB, leaving 0/1 available for UART if needed.
+#ifdef BOARD_WS_2350
+    // Waveshare RP2350-USB-A: USB-A socket is connected to GPIO12 (D+) and GPIO13 (D-) per schematic
+    // Use GPIO12 for D+ (D- is automatically D+ + 1 = GPIO13)
+    pio_cfg.pin_dp = 12;
+#else
+    // Standard Pico boards: Use GPIO2/3 for USB, leaving 0/1 available for UART if needed.
     pio_cfg.pin_dp = 2;
+#endif
     // Use DMA channel 2 instead of 0 to avoid conflict with CYW43 WiFi
     pio_cfg.tx_ch = 2;
     LOG_INFO("Core 1: pio_cfg.pin_dp = %d, tx_ch = %d\n", pio_cfg.pin_dp, pio_cfg.tx_ch);
@@ -101,6 +111,10 @@ _Noreturn void core1_loop() {
 void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_report, uint16_t desc_len) {
     (void) desc_report;
     (void) desc_len;
+
+    // Track USB device mounts for debugging
+    usb_device_ever_mounted = true;
+    usb_mount_count++;
 
     // Interface protocol (hid_interface_protocol_enum_t)
     const char *protocol_str[] = {"None", "Keyboard", "Mouse"};

@@ -61,6 +61,10 @@
 #include "cdc_stdio_lib.h"
 #endif
 
+#ifdef BOARD_WS_2350
+#include "ws2812_led.h"
+#endif
+
 // Reminders:
 // Latest is ~/pico/hid-proxy2/build
 // make && openocd -f interface/cmsis-dap.cfg -f target/rp2040.cfg -c "adapter speed 5000" -c "program $(ls *.elf) verify reset exit"
@@ -236,8 +240,20 @@ int main(void) {
     LOG_INFO("Built-in LED initialized on GPIO%d\n", BUILTIN_LED_PIN);
 #endif
 
+#ifdef BOARD_WS_2350
+    // Initialize WS2812 RGB LED for status indication
+    if (ws2812_led_init()) {
+        LOG_INFO("WS2812 RGB LED initialized successfully\n");
+        // Set initial color based on locked state
+        ws2812_led_update_status(locked, false);
+    } else {
+        LOG_ERROR("Failed to initialize WS2812 RGB LED\n");
+    }
+#endif
+
     LOG_INFO("Entering main loop\n");
     absolute_time_t last_interaction = get_absolute_time();
+    absolute_time_t start_time = get_absolute_time();
     status_t previous_status = locked;
 #ifdef PICO_CYW43_SUPPORTED
     bool http_server_started = false;
@@ -245,10 +261,85 @@ int main(void) {
 #endif
 
     LOG_INFO("Starting main event loop (first iteration)\n");
+    bool status_message_printed = false;
+    absolute_time_t last_periodic_log = get_absolute_time();
+
     while (true) {
+        // Print comprehensive status message after 5 seconds (when USB CDC is ready)
+        if (!status_message_printed && absolute_time_diff_us(start_time, get_absolute_time()) > 5000000) {
+            status_message_printed = true;
+
+            // Count keydefs
+            uint8_t triggers[256];
+            int keydef_count = keydef_list(triggers, 256);
+            int public_count = 0, private_count = 0;
+            for (int i = 0; i < keydef_count; i++) {
+                keydef_t *def = keydef_load(triggers[i]);
+                if (def) {
+                    if (!def->require_unlock) public_count++;
+                    else private_count++;
+                    free(def);
+                }
+            }
+
+            printf("\n");
+            printf("=== HID Proxy Status (5s uptime) ===\n");
+#ifdef BOARD_WS_2350
+            printf("Board: Waveshare RP2350-USB-A\n");
+            printf("USB-A: GPIO12 (D+), GPIO13 (D-)\n");
+#elif defined(PICO_CYW43_SUPPORTED)
+            printf("Board: Raspberry Pi Pico W\n");
+            printf("PIO-USB: GPIO2 (D+), GPIO3 (D-)\n");
+#else
+            printf("Board: Raspberry Pi Pico\n");
+            printf("PIO-USB: GPIO2 (D+), GPIO3 (D-)\n");
+#endif
+            printf("State: %s\n", status_string(kb.status));
+            printf("Keydefs: %d defined (%d public, %d private)\n", keydef_count, public_count, private_count);
+#ifdef PICO_CYW43_SUPPORTED
+            if (wifi_is_connected()) {
+                printf("WiFi: Connected\n");
+            } else {
+                printf("WiFi: Not connected\n");
+            }
+#endif
+            printf("Uptime: 5 seconds\n");
+            printf("====================================\n");
+            printf("\n");
+        }
+
+        // Periodic diagnostic logging every 10 seconds to help debug USB host issues
+        if (absolute_time_diff_us(last_periodic_log, get_absolute_time()) > 10000000) {
+            last_periodic_log = get_absolute_time();
+            printf("\n[Periodic] Core 0: Running, status=%s, uptime=%lld sec\n",
+                   status_string(kb.status),
+                   absolute_time_diff_us(start_time, get_absolute_time()) / 1000000);
+#ifdef BOARD_WS_2350
+            printf("[Periodic] Core 1: Should be running USB host on GPIO12 (D+), GPIO13 (D-)\n");
+#else
+            printf("[Periodic] Core 1: Should be running USB host on GPIO2 (D+), GPIO3 (D-)\n");
+#endif
+            printf("[Periodic] USB devices mounted: %lu total (ever=%s)\n",
+                   (unsigned long)usb_mount_count,
+                   usb_device_ever_mounted ? "YES" : "NO");
+            printf("[Periodic] Queue length: keyboard_to_tud=%d, tud_to_host=%d\n",
+                   queue_get_level(&keyboard_to_tud_queue),
+                   queue_get_level(&tud_to_physical_host_queue));
+            printf("\n");
+        }
+
         if (kb.status != previous_status) {
             LOG_INFO("State changed from %s to %s\n", status_string(previous_status), status_string(kb.status));
             previous_status = kb.status;
+
+#ifdef BOARD_WS_2350
+            // Update RGB LED when status changes
+#ifdef PICO_CYW43_SUPPORTED
+            ws2812_led_update_status(kb.status, web_access_is_enabled());
+#else
+            ws2812_led_update_status(kb.status, false);
+#endif
+#endif
         }
 
         // Always run USB device task (handles suspend/resume internally)
@@ -258,6 +349,12 @@ int main(void) {
         // Skip non-critical tasks when suspended to save power
         if (!usb_suspended) {
             update_status_led();  // Update LED status feedback
+
+#ifdef BOARD_WS_2350
+            // Update RGB LED animations (e.g. rainbow pulse for web access)
+            ws2812_led_task();
+#endif
+
 #ifdef ENABLE_NFC
             nfc_task(kb.status == locked);
 #endif

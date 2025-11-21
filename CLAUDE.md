@@ -21,12 +21,28 @@ When making breaking changes, simply document in MIGRATION_NOTES.md that users s
 ## Board Support
 
 **Supported Hardware**:
-- Raspberry Pi Pico (RP2040, no WiFi)
-- Raspberry Pi Pico W (RP2040 with WiFi/HTTP)
-- Raspberry Pi Pico2 (RP2350, no WiFi)
-- Raspberry Pi Pico2 W (RP2350 with WiFi/HTTP)
+- ✅ Raspberry Pi Pico (RP2040, no WiFi) - **WORKING**
+- ✅ Raspberry Pi Pico W (RP2040 with WiFi/HTTP) - **WORKING**
+- ❌ Raspberry Pi Pico2 (RP2350, no WiFi) - **NOT WORKING** (PIO-USB issues)
+- ❌ Raspberry Pi Pico2 W (RP2350 with WiFi/HTTP) - **NOT WORKING** (PIO-USB issues)
+- ❌ Waveshare RP2350-USB-A (RP2350, no WiFi, USB-A host port on GPIO12/13) - **NOT WORKING** (PIO-USB issues)
 
-**Pico2 (RP2350) Status**: Build support is provided via Pico SDK 2.2.0, but PIO-USB compatibility is uncertain and depends on GPIO selection. The project uses GPIO2/3 for PIO-USB host stack. Test thoroughly before deployment.
+**RP2350 Status - NOT CURRENTLY FUNCTIONAL**:
+
+Build support for RP2350 boards exists via Pico SDK 2.2.0, but **USB keyboards are not detected on any RP2350 hardware tested**. The issue manifests as:
+- Core 1 initializes successfully
+- tuh_init() completes without errors
+- `tuh_hid_mount_cb()` never fires (no USB devices detected)
+- Keyboards work fine on the same hardware when plugged into RP2040 boards
+
+**Possible causes**:
+1. RP2350B silicon bug (Erratum E9) affecting PIO timing
+2. Incompatibility between Pico-PIO-USB library and RP2350 architecture
+3. GPIO/timing configuration issues specific to RP2350
+
+**Current status**: RP2350 support is **on hold** until PIO-USB library maintainers address RP2350 compatibility or silicon bugs are resolved. Use RP2040-based boards (Pico/Pico W) for production deployments.
+
+**Waveshare Board Features**: The RP2350-USB-A build includes WS2812 RGB LED support (GPIO16) for visual status feedback. Build system is complete but non-functional due to PIO-USB issue above.
 
 ## Architecture
 
@@ -85,6 +101,18 @@ On first use, any password is accepted and its hash is stored. Subsequent unlock
 
 **Flash Storage** (flash.c): Minimal file containing only `init_state()` which clears kvstore and resets device to blank state. All persistence is handled by kvstore.
 
+**RGB LED Status (Waveshare RP2350-USB-A only)** (ws2812_led.c/h): Provides visual feedback via WS2812 RGB LED on GPIO16. Automatically reflects device state:
+- 🔴 **RED**: Device locked (encryption key not in memory)
+- 🟢 **GREEN**: Device unlocked (normal operation)
+- 🔵 **BLUE**: Entering password or defining key
+- 🟡 **YELLOW**: Command mode active (both shifts pressed)
+- 🟣 **PURPLE**: NFC operation in progress (if NFC enabled)
+- ⚪ **WHITE (dim)**: Idle/blank state or USB suspended
+- 🟠 **ORANGE**: Error indication (brief flash)
+- 🌈 **RAINBOW (pulsing)**: Web access enabled (5-minute configuration window)
+
+LED updates automatically on status changes and runs animation task in main loop. Uses 1 PIO state machine (auto-selected). Conditional compilation with `#ifdef BOARD_WS_2350`.
+
 **NFC Authentication** (nfc_tag.c): *Optional feature, disabled by default.* Interfaces with PN532 NFC reader via I2C (GPIO 4/5) to read/write 16-byte encryption keys from Mifare Classic tags. Supports multiple known authentication keys for tag access. Enable with `--nfc` build flag.
 
 **USB Configuration** (tusb_config.h): Configures device stack with keyboard, mouse, and CDC interfaces. Host stack (via PIO-USB on GPIO2/3) configured for keyboard/mouse input.
@@ -100,7 +128,7 @@ On first use, any password is accepted and its hash is stored. Subsequent unlock
 ## Building
 
 ### Prerequisites
-- **Raspberry Pi Pico/Pico W/Pico2/Pico2 W**
+- **Raspberry Pi Pico/Pico W/Pico2/Pico2 W/Waveshare RP2350-USB-A**
 - Docker (recommended) or local Pico SDK 2.2.0+
 - Submodules initialized: `Pico-PIO-USB`, `pico-kvstore`, `tiny-AES-c`, `tinycrypt`
 
@@ -114,6 +142,7 @@ On first use, any password is accepted and its hash is stored. Subsequent unlock
 ./build.sh --board pico_w       # RP2040 with WiFi (default)
 ./build.sh --board pico2        # RP2350, no WiFi
 ./build.sh --board pico2_w      # RP2350 with WiFi
+./build.sh --board ws_2350      # Waveshare RP2350-USB-A (RP2350, no WiFi, USB-A on GPIO12/13)
 
 # Other options
 ./build.sh --stdio              # Enable USB CDC stdio for debugging
@@ -132,6 +161,8 @@ mkdir build && cd build
 
 # Configure for specific board
 cmake -DPICO_BOARD=pico_w ..    # or pico, pico2, pico2_w
+# For Waveshare RP2350-USB-A:
+cmake -DPICO_BOARD=pico2 -DBOARD_WS_2350=ON ..
 
 # Build
 make -j$(nproc)
@@ -222,6 +253,10 @@ The text format for macros (used for HTTP/network configuration):
 - HTTP GET /status: `status_cgi_handler()` in http_server.c
 - MQTT client init: `mqtt_client_init()` in mqtt_client.c (connects to broker, sets up LWT)
 - MQTT publish: `mqtt_publish_lock_state()` in mqtt_client.c (publishes lock/unlock events)
+- RGB LED initialization: `ws2812_led_init()` in ws2812_led.c (auto-selects PIO/SM, GPIO16)
+- RGB LED status update: `ws2812_led_update_status()` in ws2812_led.c (maps device status to color)
+- RGB LED animation: `ws2812_led_task()` in ws2812_led.c (handles rainbow pulse for web access)
+- 5-second status message: main loop in hid_proxy.c (prints comprehensive status after boot)
 
 ## Configuration Constants
 
@@ -230,7 +265,10 @@ The text format for macros (used for HTTP/network configuration):
 - `IDLE_TIMEOUT_MILLIS`: 120 minutes before auto-lock (hid_proxy.h:20)
 - Web access timeout: 5 minutes (wifi_config.c:web_access_enable)
 - NFC key storage address: Block `0x3A` on Mifare tag (nfc_tag.c:18)
-- I2C pins: SDA=4, SCL=5; PIO-USB pins: DP=2 (nfc_tag.c:12-13, usb_host.c:38)
+- I2C pins: SDA=4, SCL=5 (nfc_tag.c:12-13)
+- PIO-USB pins: DP=2 (standard Pico boards), DP=12 (Waveshare RP2350-USB-A) (usb_host.c:46-53)
+- WS2812 RGB LED pin: GPIO16 (Waveshare RP2350-USB-A only) (ws2812_led.c:13)
+- Status message delay: 5 seconds after boot (hid_proxy.c main loop)
 - mDNS hostname: `hidproxy-XXXX.local` where XXXX = last 4 hex digits of board ID (wifi_config.c)
 - Keydef key format: `keydef.0xHH` where HH is HID code (keydef_store.c)
 - WiFi key format: `wifi.ssid`, `wifi.password`, `wifi.country`, `wifi.enabled` (wifi_config.c)

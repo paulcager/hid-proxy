@@ -44,6 +44,9 @@ option(ENABLE_USB_STDIO "Enable USB CDC stdio for debugging" OFF)
 # Disabled by default as NFC hardware is not commonly used
 option(ENABLE_NFC "Enable NFC tag authentication support" OFF)
 
+# Option to enable Waveshare RP2350-USB-A board (changes PIO-USB pins)
+option(BOARD_WS_2350 "Build for Waveshare RP2350-USB-A board" OFF)
+
 add_subdirectory("./Pico-PIO-USB" pico_pio_usb)
 
 # Add pico-kvstore for key-value storage with encryption
@@ -77,6 +80,17 @@ if(ENABLE_NFC)
     target_sources(hid_proxy PRIVATE
         src/nfc_tag.c
     )
+endif()
+
+# Add WS2812 LED sources only if building for Waveshare RP2350-USB-A
+if(BOARD_WS_2350)
+    # Generate PIO header for WS2812
+    pico_generate_pio_header(hid_proxy ${CMAKE_CURRENT_LIST_DIR}/ws2812.pio)
+
+    target_sources(hid_proxy PRIVATE
+        src/ws2812_led.c
+    )
+    message(STATUS "WS2812 RGB LED support enabled for Waveshare board")
 endif()
 
 # Add WiFi/HTTP/MQTT/TLS sources only if building for Pico W
@@ -339,5 +353,11 @@ endif()
 if(ENABLE_NFC)
     target_compile_definitions(hid_proxy PRIVATE ENABLE_NFC=1)
     message(STATUS "NFC support enabled")
+endif()
+
+# Pass BOARD_WS_2350 to source code as a preprocessor macro
+if(BOARD_WS_2350)
+    target_compile_definitions(hid_proxy PRIVATE BOARD_WS_2350=1)
+    message(STATUS "Waveshare RP2350-USB-A board selected (USB-A on GPIO13)")
 endif()
 
