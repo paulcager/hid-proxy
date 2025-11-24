@@ -284,11 +284,13 @@ typedef struct {
 6. WiFi configuration via serial: `wifi ssid password`
 7. LED status indicators (WiFi connected, etc.)
 
-### Phase 3: MQTT Integration (2-3 days)
-8. MQTT client library (paho-mqtt or similar)
-9. Publish keystroke events to `hidproxy/keystroke`
-10. Subscribe to `hidproxy/config/set`
-11. Home Assistant discovery messages
+### Phase 3: MQTT Integration ✅ IMPLEMENTED (November 2025)
+8. ✅ MQTT client library (lwIP MQTT)
+9. ✅ Publish lock/unlock events to `hidproxy-XXXX/lock` and `hidproxy-XXXX/status`
+10. ⏸️ Subscribe to `hidproxy/config/set` (future enhancement)
+11. ⏸️ Home Assistant discovery messages (future enhancement)
+
+**Status**: Basic MQTT integration complete with TLS support. Device publishes lock state changes and online/offline status. See MQTT_SETUP.md for configuration.
 
 ### Phase 4: Cleanup (1 day)
 12. **Remove MSC mode entirely**:

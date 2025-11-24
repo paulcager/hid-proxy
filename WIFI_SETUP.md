@@ -239,14 +239,32 @@ Check syntax:
 - **Automatic reconnect**: WiFi retries on disconnection
 - **Minimal overhead**: lwIP runs in background thread
 
+## MQTT Integration
+
+The HID Proxy also supports MQTT for publishing lock/unlock events to Home Assistant and other home automation systems. See **MQTT_SETUP.md** for complete guide.
+
+Quick start:
+```bash
+# Add to .env file
+MQTT_BROKER=192.168.1.100
+MQTT_PORT=1883
+
+# Rebuild and flash
+./build.sh --board pico_w
+```
+
+Topics published:
+- `hidproxy-XXXX/status` - online/offline
+- `hidproxy-XXXX/lock` - locked/unlocked
+
 ## Future Enhancements
 
 Planned features (see CONFIGURATION_OPTIONS.md):
 - Serial console for WiFi setup
-- MQTT publishing of keystroke events
-- Home Assistant integration
 - Simple web UI for macro editing
 - HTTP Basic Auth (optional secondary protection)
+- MQTT configuration of macros
+- MQTT keystroke publishing
 
 ## API Reference
 

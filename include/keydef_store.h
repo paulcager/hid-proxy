@@ -53,22 +53,22 @@ size_t keydef_list(uint8_t *triggers, size_t max_count);
 
 /*! \brief Get the size of a keydef in bytes
  *
- * Helper function to calculate total size including variable-length reports array.
+ * Helper function to calculate total size including variable-length actions array.
  *
  * \param keydef Pointer to keydef structure
  * \return Total size in bytes
  */
 static inline size_t keydef_size(const keydef_t *keydef) {
-    return sizeof(keydef_t) + keydef->count * sizeof(hid_keyboard_report_t);
+    return sizeof(keydef_t) + keydef->count * sizeof(action_t);
 }
 
-/*! \brief Allocate a new keydef with space for N reports
+/*! \brief Allocate a new keydef with space for N actions
  *
  * Helper function to allocate a keydef structure with specified capacity.
  * Caller must free() the returned pointer when done.
  *
  * \param trigger HID keycode
- * \param count Number of HID reports to allocate space for
+ * \param count Number of actions to allocate space for
  * \return Pointer to allocated keydef, or NULL on allocation failure
  */
 keydef_t *keydef_alloc(uint8_t trigger, uint16_t count);

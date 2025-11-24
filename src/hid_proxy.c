@@ -54,10 +54,15 @@
 #include "pico/cyw43_arch.h"
 #include "wifi_config.h"
 #include "http_server.h"
+#include "mqtt_client.h"
 #endif
 
 #ifdef ENABLE_USB_STDIO
 #include "cdc_stdio_lib.h"
+#endif
+
+#ifdef BOARD_WS_2350
+#include "ws2812_led.h"
 #endif
 
 // Reminders:
@@ -81,11 +86,20 @@ queue_t tud_to_physical_host_queue;
 // A queue of events from the physical host, to be sent to the physical keyboard.
 queue_t leds_queue;
 
+// Diagnostic counters for keystroke tracking
+volatile uint32_t keystrokes_received_from_physical = 0;  // Total reports from physical keyboard
+volatile uint32_t keystrokes_sent_to_host = 0;            // Total reports sent to host computer
+volatile uint32_t queue_drops_realtime = 0;               // Times we dropped oldest item in realtime queue
+
 // LED control for visual status feedback (Num Lock)
 static uint8_t current_led_state = 0;       // Current LED state to send to keyboard
 static absolute_time_t next_led_toggle;     // When to toggle LED next
 uint32_t led_on_interval_ms = 0;            // How long LED stays on (ms)
 uint32_t led_off_interval_ms = 0;           // How long LED stays off (ms)
+
+// USB suspend/resume state
+volatile bool usb_suspended = false;
+static uint32_t pre_suspend_clock_khz = 0;
 
 // Built-in LED pin (GPIO25 on Pico/Pico2, CYW43 on Pico W/Pico2 W)
 #ifndef PICO_CYW43_SUPPORTED
@@ -95,6 +109,18 @@ uint32_t led_off_interval_ms = 0;           // How long LED stays off (ms)
 /*------------- LED Status Feedback -------------*/
 
 void update_status_led(void) {
+    // Keep LED ON until a keyboard is connected
+    extern volatile bool usb_device_ever_mounted;
+    if (!usb_device_ever_mounted) {
+        // No keyboard connected yet - keep LED ON
+#ifdef PICO_CYW43_SUPPORTED
+        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
+#else
+        gpio_put(BUILTIN_LED_PIN, 1);
+#endif
+        return;
+    }
+
     if (led_on_interval_ms == 0 && led_off_interval_ms == 0) {
         // LED off (locked/blank state)
         current_led_state = 0;
@@ -119,6 +145,50 @@ void update_status_led(void) {
 
     // Send to physical keyboard (non-blocking)
     queue_try_add(&leds_queue, &current_led_state);
+}
+
+/*------------- USB Suspend/Resume Callbacks -------------*/
+
+// Invoked when USB bus is suspended
+// remote_wakeup_en: if true, host allows us to send wakeup signal
+void tud_suspend_cb(bool remote_wakeup_en) {
+    usb_suspended = true;
+    LOG_INFO("USB suspended (remote_wakeup=%d)\n", remote_wakeup_en);
+
+    // Save current clock speed
+    pre_suspend_clock_khz = clock_get_hz(clk_sys) / 1000;
+
+#ifdef PICO_CYW43_SUPPORTED
+    // Shut down WiFi to save power
+    if (wifi_is_initialized()) {
+        wifi_suspend();
+    }
+#endif
+
+    // Lower CPU clock to minimum stable frequency
+    set_sys_clock_khz(48000, true);  // 48MHz
+
+    LOG_INFO("Entering low-power mode (48MHz)\n");
+}
+
+// Invoked when USB bus is resumed
+void tud_resume_cb(void) {
+    LOG_INFO("USB resumed\n");
+    usb_suspended = false;
+
+    // Restore CPU clock
+    if (pre_suspend_clock_khz > 0) {
+        set_sys_clock_khz(pre_suspend_clock_khz, true);
+    }
+
+#ifdef PICO_CYW43_SUPPORTED
+    // Resume WiFi
+    if (wifi_is_initialized()) {
+        wifi_resume();
+    }
+#endif
+
+    LOG_INFO("Resumed to normal operation (%lu MHz)\n", clock_get_hz(clk_sys) / 1000000);
 }
 
 /*------------- MAIN -------------*/
@@ -178,51 +248,151 @@ int main(void) {
     wifi_init();
     LOG_INFO("WiFi initialization complete\n");
     // CYW43 LED is automatically initialized by wifi_init()
+    // Turn LED ON until keyboard connects
+    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
+    LOG_INFO("Built-in LED ON (will turn off when keyboard connects)\n");
 #else
     LOG_INFO("WiFi not supported on this hardware\n");
     // Initialize built-in LED (GPIO25) on non-WiFi boards
     gpio_init(BUILTIN_LED_PIN);
     gpio_set_dir(BUILTIN_LED_PIN, GPIO_OUT);
-    gpio_put(BUILTIN_LED_PIN, 0);  // Start with LED off
-    LOG_INFO("Built-in LED initialized on GPIO%d\n", BUILTIN_LED_PIN);
+    gpio_put(BUILTIN_LED_PIN, 1);  // Start with LED ON (will turn off when keyboard connects)
+    LOG_INFO("Built-in LED initialized on GPIO%d (ON until keyboard connects)\n", BUILTIN_LED_PIN);
+#endif
+
+#ifdef BOARD_WS_2350
+    // Initialize WS2812 RGB LED for status indication
+    if (ws2812_led_init()) {
+        LOG_INFO("WS2812 RGB LED initialized successfully\n");
+        // Set initial color based on locked state
+        ws2812_led_update_status(locked, false);
+    } else {
+        LOG_ERROR("Failed to initialize WS2812 RGB LED\n");
+    }
 #endif
 
     LOG_INFO("Entering main loop\n");
     absolute_time_t last_interaction = get_absolute_time();
+    absolute_time_t start_time = get_absolute_time();
     status_t previous_status = locked;
 #ifdef PICO_CYW43_SUPPORTED
     bool http_server_started = false;
+    bool mqtt_client_started = false;
 #endif
 
     LOG_INFO("Starting main event loop (first iteration)\n");
+    bool status_message_printed = false;
+
     while (true) {
+        // Print comprehensive status message after 5 seconds (when USB CDC is ready)
+        if (!status_message_printed && absolute_time_diff_us(start_time, get_absolute_time()) > 5000000) {
+            status_message_printed = true;
+
+            // Count keydefs
+            uint8_t triggers[256];
+            int keydef_count = keydef_list(triggers, 256);
+            int public_count = 0, private_count = 0;
+            for (int i = 0; i < keydef_count; i++) {
+                keydef_t *def = keydef_load(triggers[i]);
+                if (def) {
+                    if (!def->require_unlock) public_count++;
+                    else private_count++;
+                    free(def);
+                }
+            }
+
+            printf("\n");
+            printf("=== HID Proxy Status (5s uptime) ===\n");
+#ifdef BOARD_WS_2350
+            printf("Board: Waveshare RP2350-USB-A\n");
+            printf("USB-A: GPIO12 (D+), GPIO13 (D-)\n");
+#elif defined(PICO_CYW43_SUPPORTED)
+            printf("Board: Raspberry Pi Pico W\n");
+            printf("PIO-USB: GPIO2 (D+), GPIO3 (D-)\n");
+#else
+            printf("Board: Raspberry Pi Pico\n");
+            printf("PIO-USB: GPIO2 (D+), GPIO3 (D-)\n");
+#endif
+            printf("State: %s\n", status_string(kb.status));
+            printf("Keydefs: %d defined (%d public, %d private)\n", keydef_count, public_count, private_count);
+            printf("Keystrokes: %lu received, %lu sent, %lu dropped\n",
+                   (unsigned long)keystrokes_received_from_physical,
+                   (unsigned long)keystrokes_sent_to_host,
+                   (unsigned long)queue_drops_realtime);
+            printf("Queue depths: keyboard_to_tud=%d, tud_to_host=%d\n",
+                   queue_get_level(&keyboard_to_tud_queue),
+                   queue_get_level(&tud_to_physical_host_queue));
+            printf("USB report in progress: %s\n", kb.send_to_host_in_progress ? "YES (stuck?)" : "no");
+#ifdef PICO_CYW43_SUPPORTED
+            if (wifi_is_connected()) {
+                printf("WiFi: Connected\n");
+            } else {
+                printf("WiFi: Not connected\n");
+            }
+#endif
+            printf("Uptime: 5 seconds\n");
+            printf("====================================\n");
+            printf("\n");
+        }
+
         if (kb.status != previous_status) {
             LOG_INFO("State changed from %s to %s\n", status_string(previous_status), status_string(kb.status));
             previous_status = kb.status;
+
+#ifdef BOARD_WS_2350
+            // Update RGB LED when status changes
+#ifdef PICO_CYW43_SUPPORTED
+            ws2812_led_update_status(kb.status, web_access_is_enabled());
+#else
+            ws2812_led_update_status(kb.status, false);
+#endif
+#endif
         }
 
-        tud_task(); // tinyusb device task
+        // Always run USB device task (handles suspend/resume internally)
+        tud_task();
         tud_cdc_write_flush();
-        update_status_led();  // Update LED status feedback
+
+        // Skip non-critical tasks when suspended to save power
+        if (!usb_suspended) {
+            update_status_led();  // Update LED status feedback
+
+#ifdef BOARD_WS_2350
+            // Update RGB LED animations (e.g. rainbow pulse for web access)
+            ws2812_led_task();
+#endif
+
 #ifdef ENABLE_NFC
-        nfc_task(kb.status == locked);
+            nfc_task(kb.status == locked);
 #endif
 
 #ifdef PICO_CYW43_SUPPORTED
-        // WiFi tasks (only on Pico W)
-        wifi_task();
-        if (wifi_is_connected() && !http_server_started) {
-            http_server_init();
-            http_server_started = true;
-        }
-        http_server_task();
+            // WiFi tasks (only on Pico W, and only when not suspended)
+            if (!wifi_is_suspended()) {
+                wifi_task();
+                if (wifi_is_connected() && !http_server_started) {
+                    http_server_init();
+                    http_server_started = true;
+                }
+                if (wifi_is_connected() && !mqtt_client_started) {
+                    mqtt_client_started = mqtt_client_init();
+                }
+                http_server_task();
+                mqtt_client_task();
+            }
 #endif
+        }
 
+        // Process keyboard reports even when suspended (needed for remote wakeup)
         hid_report_t report;
-        // Anything sent to us from the keyboard process (PIO on core1)?
         if (queue_try_remove(&keyboard_to_tud_queue, &report)) {
             last_interaction = get_absolute_time();
             next_report(report);
+
+            // If suspended, try to send remote wakeup signal
+            if (usb_suspended && tud_remote_wakeup()) {
+                LOG_INFO("Sent remote wakeup signal\n");
+            }
         }
 
         // Anything waiting to be sent to the (real) host?
@@ -249,7 +419,7 @@ int main(void) {
                     if (test_def != NULL) {
                         // Key is valid
                         free(test_def);
-                        kb.status = normal;
+                        unlock();
                         printf("NFC authentication successful\n");
                     } else {
                         // Key is invalid
@@ -257,7 +427,7 @@ int main(void) {
                     }
                 } else {
                     // No keydefs stored yet - assume key is valid
-                    kb.status = normal;
+                    unlock();
                     printf("NFC key accepted (no keydefs to verify)\n");
                 }
             }
@@ -267,6 +437,11 @@ int main(void) {
         if (kb.status != locked && absolute_time_diff_us(last_interaction, get_absolute_time()) > 1000 * IDLE_TIMEOUT_MILLIS) {
             LOG_INFO("Timed out - clearing encrypted data\n");
             lock();
+        }
+
+        // When suspended, use __wfe() to sleep until interrupt (saves power)
+        if (usb_suspended) {
+            __wfe();
         }
     }
 
@@ -281,17 +456,58 @@ void send_report_to_host(send_data_t to_send) {
         hex_dump(to_send.data, to_send.len);
 #endif
         kb.send_to_host_in_progress = true;
+        // Count keyboard reports sent to host
+        if (to_send.report_id == ITF_NUM_KEYBOARD) {
+            keystrokes_sent_to_host++;
+        }
     } else {
         LOG_ERROR("tud_hid_n_report FAILED: %x\n", to_send.report_id);
     }
 }
 
-void queue_add_or_panic(queue_t *q, const void *data) {
+/*! \brief Add item to queue with backpressure (blocking)
+ *
+ * Used for macro playback where we want to ensure ALL keystrokes are sent.
+ * If queue is full, this function blocks and processes USB events (tud_task)
+ * to drain the queue. This naturally throttles macro playback to USB speed.
+ *
+ * \param q Queue to add to
+ * \param data Pointer to data to add
+ */
+void queue_add_with_backpressure(queue_t *q, const void *data) {
+    while (!queue_try_add(q, data)) {
+        // Queue full - process USB to drain it
+        tud_task();
+        tight_loop_contents();  // Yield to other core
+    }
+}
+
+/*! \brief Add item to queue with graceful degradation (non-blocking)
+ *
+ * Used for real-time keyboard input where we don't want to block.
+ * If queue is full, drops the OLDEST item to make room for the newest.
+ * This ensures real-time input never blocks, but may lose data under extreme load.
+ *
+ * \param q Queue to add to
+ * \param data Pointer to data to add
+ */
+void queue_add_realtime(queue_t *q, const void *data) {
     if (!queue_try_add(q, data)) {
-        // TODO - this is most likely to happen if we are sending large definitions
-        // more quickly than they can be sent over USB. Fix this by interleaving
-        // queue puts with tud_task and using blocking adds.
-        panic("Queue is full");
+        // Queue full - drop oldest item to make room
+        queue_drops_realtime++;
+        uint8_t discard_buffer[sizeof(send_data_t)];  // Max size of any queue item
+        if (queue_try_remove(q, discard_buffer)) {
+            LOG_WARNING("Queue overflow - dropped oldest report to make room (total drops: %lu)\n",
+                       (unsigned long)queue_drops_realtime);
+            // Try again (should succeed now)
+            if (!queue_try_add(q, data)) {
+                LOG_ERROR("Queue add failed even after drop - this shouldn't happen (total drops: %lu)\n",
+                         (unsigned long)queue_drops_realtime);
+            }
+        } else {
+            LOG_ERROR("Queue full but can't remove item - concurrent access issue? (total drops: %lu)\n",
+                     (unsigned long)queue_drops_realtime);
+        }
     }
 }
 
@@ -310,7 +526,10 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
             if (bufsize < 1) return;
 
             LOG_DEBUG("leds: %x\n", buffer[0]);
-            queue_add_or_panic(&leds_queue, buffer);
+            // LED queue is small (4 items) and low-frequency, use try_add
+            if (!queue_try_add(&leds_queue, buffer)) {
+                LOG_WARNING("LED queue full - dropping LED update\n");
+            }
         }
     }
 }
@@ -320,15 +539,35 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
 // Return zero will cause the stack to STALL request
 uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t *buffer,
                                uint16_t reqlen) {
-    // TODO not Implemented
     (void) instance;
-    (void) report_id;
-    (void) report_type;
-    (void) buffer;
-    (void) reqlen;
 
-    LOG_INFO("tud_hid_get_report_cb: %x %x %x\n", report_id, report_type, buffer[0]);
+    LOG_DEBUG("tud_hid_get_report_cb: instance=%x report_id=%x report_type=%x reqlen=%d\n",
+             instance, report_id, report_type, reqlen);
 
+    // For keyboard interface, return empty keyboard report when idle
+    if (report_type == HID_REPORT_TYPE_INPUT) {
+        if (report_id == ITF_NUM_KEYBOARD && reqlen >= sizeof(hid_keyboard_report_t)) {
+            hid_keyboard_report_t empty_report = {0};
+            memcpy(buffer, &empty_report, sizeof(hid_keyboard_report_t));
+            return sizeof(hid_keyboard_report_t);
+        }
+        // For mouse interface
+        else if (report_id == ITF_NUM_MOUSE && reqlen >= sizeof(hid_mouse_report_t)) {
+            hid_mouse_report_t empty_report = {0};
+            memcpy(buffer, &empty_report, sizeof(hid_mouse_report_t));
+            return sizeof(hid_mouse_report_t);
+        }
+    }
+    // For output reports (e.g., LED status), return current LED state
+    else if (report_type == HID_REPORT_TYPE_OUTPUT) {
+        if (report_id == ITF_NUM_KEYBOARD && reqlen >= 1) {
+            buffer[0] = current_led_state;
+            return 1;
+        }
+    }
+
+    // Unsupported report type/id - STALL the request
+    LOG_DEBUG("tud_hid_get_report_cb: Unsupported report_id=%x report_type=%x\n", report_id, report_type);
     return 0;
 }
 
@@ -350,6 +589,22 @@ void lock() {
     led_off_interval_ms = 0;
     kvstore_clear_encryption_key();  // Clear encryption key from memory
     enc_clear_key();  // Also clear the key in encryption.c
+
+#ifdef PICO_CYW43_SUPPORTED
+    // Publish lock event to MQTT
+    mqtt_publish_lock_state(true);
+#endif
+}
+
+void unlock() {
+    kb.status = normal;
+    led_on_interval_ms = 100;    // Slow pulse when unlocked
+    led_off_interval_ms = 2400;
+
+#ifdef PICO_CYW43_SUPPORTED
+    // Publish unlock event to MQTT
+    mqtt_publish_lock_state(false);
+#endif
 }
 
 void hex_dump(void const *ptr, size_t len) {

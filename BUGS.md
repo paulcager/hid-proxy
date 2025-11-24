@@ -303,15 +303,11 @@ if ((unsigned)read != size) {
 
 ---
 
-### 20. Flash Verification Uses Wrong Size
+### 20. Flash Verification Uses Wrong Size - **OBSOLETE**
 **File:** `flash.c`
-**Line:** 34
+**Line:** 34 (removed)
 **Description:** Compares entire `FLASH_STORE_SIZE` but only writes used portion according to the comment.
-```c
-if (memcmp(kb->local_store, FLASH_STORE_ADDRESS, FLASH_STORE_SIZE) != 0) {
-```
-**Impact:** Verification might fail even if the write succeeded, if there's garbage in unused portions of the buffer.
-**Fix:** Only compare the portion that was actually written, or zero-fill the entire buffer before writing.
+**Status:** ✅ **OBSOLETE** - `save_state()` function removed; kvstore handles all flash operations with proper write verification.
 
 ---
 
@@ -395,21 +391,11 @@ if (state.auth_key_index < NUM_KNOWN_AUTHS-1) {
 
 ---
 
-### 45. Panic on flash write failure
+### 45. Panic on flash write failure - **OBSOLETE**
 **File:** `flash.c`
-**Lines:** 25, 30
+**Lines:** 25, 30 (removed)
 **Description:** The `save_state` function calls `panic` if `flash_safe_execute` returns an error or if `memcmp` fails after writing to flash.
-```c
-if (ret != PICO_OK) {
-    panic("flash_safe_execute returned %d", ret);
-}
-// ...
-if (memcmp(kb->local_store, FLASH_STORE_ADDRESS, FLASH_STORE_SIZE) != 0) {
-    panic("Didn't write what we thought we wrote");
-}
-```
-**Impact:** Calling `panic` immediately halts the system, which can be undesirable in a production environment. A more graceful error handling mechanism might involve logging the error, attempting recovery, or notifying the user.
-**Fix:** Replace `panic` with a more robust error handling strategy, such as returning an error code, retrying the operation, or entering a safe mode.
+**Status:** ✅ **OBSOLETE** - `save_state()` function removed; kvstore handles flash errors internally with proper error codes.
 
 ---
 
@@ -522,15 +508,11 @@ assert(length <= sizeof(key));
 
 ---
 
-### 44. Inefficient flash writing
+### 44. Inefficient flash writing - **OBSOLETE**
 **File:** `flash.c`
-**Line:** 10
+**Line:** 10 (removed)
 **Description:** The `save_state` function erases and programs the entire `FLASH_STORE_SIZE` even if only a small portion of the data has changed.
-```c
-// TODO - we only need to write used portion (save on erases).
-```
-**Impact:** This leads to unnecessary wear on the flash memory and can increase the time taken for save operations. In embedded systems, flash memory has a limited number of write/erase cycles.
-**Fix:** Implement logic to only write the portions of the flash memory that have actually been modified, as suggested by the `TODO` comment. This would require tracking changes or using a more sophisticated flash management scheme.
+**Status:** ✅ **OBSOLETE** - `save_state()` function removed; kvstore provides granular updates and wear leveling automatically.
 
 ---
 

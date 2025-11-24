@@ -14,6 +14,8 @@
 
 #ifdef PICO_CYW43_SUPPORTED
 #include "wifi_config.h"
+#include "wifi_console.h"
+#include "mqtt_client.h"
 #endif
 
 static hid_keyboard_report_t release_all_keys = {0, 0, {0, 0, 0, 0, 0, 0}};
@@ -45,7 +47,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
             if (kb_report->modifier == 0x22 && key0 == 0) {
                 kb.status = blank_seen_magic;
             } else {
-                add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
+                add_to_host_queue_realtime(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
             }
 
             return;
@@ -76,7 +78,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 default:
                     // Any other key returns to blank and forwards keystroke
                     kb.status = blank;
-                    add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
+                    add_to_host_queue_realtime(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
                     return;
             }
 
@@ -84,7 +86,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
             if (kb_report->modifier == 0x22 && key0 == 0) {
                 kb.status = locked_seen_magic;
             } else {
-                add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
+                add_to_host_queue_realtime(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
             }
 
             return;
@@ -161,22 +163,25 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     enc_clear_key();
                 } else if (kb.status == entering_password) {
                     // Unlocking - no need to re-save anything
-                    kb.status = normal;
+                    unlock();
                     led_on_interval_ms = 100;    // Slow pulse when unlocked
                     led_off_interval_ms = 2400;
                     printf("Unlocked\n");
                 } else {
-                    // Changing/setting password
-                    // Only re-encrypt if there are keydefs AND we can read them
-                    // (i.e., this is a password change, not first-time setup)
-                    printf("Password set successfully\n");
-                    kb.status = normal;
-                    led_on_interval_ms = 100;    // Slow pulse when unlocked
-                    led_off_interval_ms = 2400;
-
-                    // TODO: Add password change support later
-                    // For now, password can only be set once on blank device
-                    // To change password, user must erase device (double-shift DEL) and start over
+                    // Changing password while unlocked
+                    // Re-encrypt all encrypted keydefs with new password
+                    if (kvstore_change_password(key)) {
+                        printf("Password changed successfully - all data re-encrypted\n");
+                        unlock();
+                        led_on_interval_ms = 100;    // Slow pulse when unlocked
+                        led_off_interval_ms = 2400;
+                    } else {
+                        printf("Password change failed\n");
+                        kb.status = locked;
+                        led_on_interval_ms = 0;   // LED off when locked
+                        led_off_interval_ms = 0;
+                        enc_clear_key();
+                    }
                 }
             }
 
@@ -189,7 +194,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 led_off_interval_ms = 50;
             } else {
                 LOG_TRACE("Adding to host Q: instance=%d, report_id=%d, len=%d\n", 0, REPORT_ID_KEYBOARD, sizeof(hid_keyboard_report_t));
-                add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
+                add_to_host_queue_realtime(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
             }
 
             return;
@@ -213,17 +218,17 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     uint8_t key[32];
                     enc_get_key(key, sizeof(key));
                     nfc_write_key(key, sizeof(key), 30 * 1000);
-                    kb.status = normal;
+                    unlock();
                     return;
                 }
 #else
                     // NFC not enabled - ignore PRINT_SCREEN command
-                    kb.status = normal;
+                    unlock();
                     return;
 #endif
 
                 case HID_KEY_ESCAPE:
-                    kb.status = normal;
+                    unlock();
                     led_on_interval_ms = 100;    // Back to slow pulse
                     led_off_interval_ms = 2400;
                     return;
@@ -233,7 +238,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     return;
 
                 case HID_KEY_SPACE:
-                    kb.status = normal;
+                    unlock();
                     print_keydefs();
 #ifdef PICO_CYW43_SUPPORTED
                     web_access_enable();
@@ -243,7 +248,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 case HID_KEY_ENTER:
                     // When unlocked, ENTER now starts capturing keystrokes to unlock (if locked).
                     // Re-encryption moved to INSERT to avoid accidental data loss.
-                    kb.status = normal;
+                    unlock();
                     return;
 
                 case HID_KEY_INSERT:
@@ -260,8 +265,24 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     lock();  // Sets LED to off (0ms) internally
                     return;
 
+                case HID_KEY_F12:
+#ifdef PICO_CYW43_SUPPORTED
+                    // WiFi configuration console
+                    printf("\nStarting WiFi configuration...\n");
+                    wifi_console_setup();
+                    unlock();
+                    led_on_interval_ms = 100;    // Back to slow pulse
+                    led_off_interval_ms = 2400;
+                    return;
+#else
+                    // WiFi not supported on this hardware
+                    printf("WiFi not supported on this hardware\n");
+                    unlock();
+                    return;
+#endif
+
                 default:
-                    kb.status = normal;
+                    unlock();
                     led_on_interval_ms = 100;    // Back to slow pulse
                     led_off_interval_ms = 2400;
                     evaluate_keydef(kb_report, key0);
@@ -293,7 +314,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     kb.key_being_defined = NULL;
                 }
 
-                kb.status = normal;
+                unlock();
                 led_on_interval_ms = 100;    // Back to slow pulse after defining
                 led_off_interval_ms = 2400;
                 return;
@@ -304,12 +325,14 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
             // Check if we have space in the allocated buffer
             // The buffer was allocated with initial capacity, check if we need to grow it
             if (this_def->count >= 64) {
-                LOG_ERROR("Maximum macro length reached (%d reports) for keycode %02x. Ignoring report.\n",
+                LOG_ERROR("Maximum macro length reached (%d actions) for keycode %02x. Ignoring action.\n",
                          this_def->count, this_def->trigger);
-                return; // Ignore the report to prevent overflow
+                return; // Ignore the action to prevent overflow
             }
 
-            this_def->reports[this_def->count] = *kb_report;
+            // Record as HID action (interactive definition only records keyboard input)
+            this_def->actions[this_def->count].type = ACTION_HID_REPORT;
+            this_def->actions[this_def->count].data.hid = *kb_report;
             this_def->count++;
             print_keydef(this_def);
     }
@@ -351,15 +374,43 @@ void evaluate_keydef(hid_keyboard_report_t *report, uint8_t key0) {
         return;
     }
 
-    printf("evaluate_keydef: Executing keycode 0x%02X with %d sequences (%s)\n",
+    printf("evaluate_keydef: Executing keycode 0x%02X with %d actions (%s)\n",
            key0, def->count, def->require_unlock ? "PRIVATE" : "PUBLIC");
 
-    // Send the macro sequence
+    // Execute the macro action sequence
     add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t),&release_all_keys);
     for (int i = 0; i < def->count; i++) {
-        hid_keyboard_report_t next_report = def->reports[i];
-        LOG_TRACE("> %x %x\n", next_report.modifier, next_report.keycode[0]);
-        add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t),&next_report);
+        action_t *action = &def->actions[i];
+
+        switch (action->type) {
+            case ACTION_HID_REPORT:
+                LOG_TRACE("> HID %x %x\n", action->data.hid.modifier, action->data.hid.keycode[0]);
+                add_to_host_queue(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), &action->data.hid);
+                break;
+
+            case ACTION_MQTT_PUBLISH:
+#ifdef PICO_CYW43_SUPPORTED
+                LOG_INFO("> MQTT %s = %s\n", action->data.mqtt.topic, action->data.mqtt.message);
+                mqtt_publish_custom(action->data.mqtt.topic, action->data.mqtt.message);
+#else
+                LOG_WARNING("> MQTT action skipped (WiFi not supported)\n");
+#endif
+                break;
+
+            case ACTION_DELAY:
+                // Future implementation
+                LOG_WARNING("> DELAY action not yet implemented\n");
+                break;
+
+            case ACTION_MOUSE_MOVE:
+                // Future implementation
+                LOG_WARNING("> MOUSE_MOVE action not yet implemented\n");
+                break;
+
+            default:
+                LOG_ERROR("> Unknown action type: %d\n", action->type);
+                break;
+        }
     }
 
     // Free the loaded keydef
@@ -420,7 +471,7 @@ void print_keydefs() {
 
     printf("DEBUG: Exited loop, closing find context...\n");
     kvs_find_close(&ctx);
-    printf("Total: %d keys\n");
+    printf("Total: %d keys\n", count);
     printf("========================\n\n");
 
     // Now serialize all keydefs in human-readable format
@@ -432,13 +483,42 @@ void print_keydefs() {
         printf("Error: Failed to serialize macros\n");
     }
     printf("==============================\n\n");
+
+    // Print diagnostic counters
+    printf("=== Diagnostic Counters ===\n");
+    printf("Keystrokes received from physical keyboard: %lu\n", (unsigned long)keystrokes_received_from_physical);
+    printf("Keystrokes sent to host computer: %lu\n", (unsigned long)keystrokes_sent_to_host);
+    printf("Queue drops (realtime): %lu\n", (unsigned long)queue_drops_realtime);
+    printf("Queue depths: keyboard_to_tud=%d, tud_to_host=%d\n",
+           queue_get_level(&keyboard_to_tud_queue),
+           queue_get_level(&tud_to_physical_host_queue));
+    printf("USB report in progress: %s\n", kb.send_to_host_in_progress ? "YES (stuck?)" : "no");
+    printf("===========================\n\n");
 }
 
 void print_keydef(const keydef_t *def) {
-    printf("%02x @%p: count = %d\n", def->trigger, def, def->count);
+    printf("%02x @%p: count = %d actions\n", def->trigger, def, def->count);
     for (int i = 0; i < def->count; i++) {
         printf("> %3d ", i);
-        print_key_report(&(def->reports[i]));
+        action_t *action = (action_t*)&def->actions[i];
+        switch (action->type) {
+            case ACTION_HID_REPORT:
+                printf("HID: ");
+                print_key_report(&action->data.hid);
+                break;
+            case ACTION_MQTT_PUBLISH:
+                printf("MQTT: topic='%s' msg='%s'\n", action->data.mqtt.topic, action->data.mqtt.message);
+                break;
+            case ACTION_DELAY:
+                printf("DELAY: %u ms\n", action->data.delay_ms);
+                break;
+            case ACTION_MOUSE_MOVE:
+                printf("MOUSE_MOVE: (not yet implemented)\n");
+                break;
+            default:
+                printf("UNKNOWN ACTION TYPE: %d\n", action->type);
+                break;
+        }
     }
     printf("--------------\n");
 }

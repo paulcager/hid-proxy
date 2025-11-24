@@ -44,6 +44,9 @@ option(ENABLE_USB_STDIO "Enable USB CDC stdio for debugging" OFF)
 # Disabled by default as NFC hardware is not commonly used
 option(ENABLE_NFC "Enable NFC tag authentication support" OFF)
 
+# Option to enable Waveshare RP2350-USB-A board (changes PIO-USB pins)
+option(BOARD_WS_2350 "Build for Waveshare RP2350-USB-A board" OFF)
+
 add_subdirectory("./Pico-PIO-USB" pico_pio_usb)
 
 # Add pico-kvstore for key-value storage with encryption
@@ -79,11 +82,25 @@ if(ENABLE_NFC)
     )
 endif()
 
-# Add WiFi/HTTP sources only if building for Pico W
+# Add WS2812 LED sources only if building for Waveshare RP2350-USB-A
+if(BOARD_WS_2350)
+    # Generate PIO header for WS2812
+    pico_generate_pio_header(hid_proxy ${CMAKE_CURRENT_LIST_DIR}/ws2812.pio)
+
+    target_sources(hid_proxy PRIVATE
+        src/ws2812_led.c
+    )
+    message(STATUS "WS2812 RGB LED support enabled for Waveshare board")
+endif()
+
+# Add WiFi/HTTP/MQTT/TLS sources only if building for Pico W
 if(PICO_CYW43_SUPPORTED)
     target_sources(hid_proxy PRIVATE
         src/wifi_config.c
+        src/wifi_console.c
         src/http_server.c
+        src/https_cert.c
+        src/mqtt_client.c
     )
 endif()
 
@@ -129,12 +146,15 @@ if(ENABLE_NFC)
     )
 endif()
 
-# Add WiFi/HTTP libraries only if building for Pico W
+# Add WiFi/HTTP/MQTT/TLS libraries only if building for Pico W
 if(PICO_CYW43_SUPPORTED)
     target_link_libraries(hid_proxy PUBLIC
         pico_cyw43_arch_lwip_threadsafe_background
         pico_lwip_mdns
         pico_lwip_http
+        pico_lwip_mqtt
+        pico_lwip_mbedtls
+        pico_mbedtls
     )
 endif()
 
@@ -209,8 +229,108 @@ if(PICO_CYW43_SUPPORTED)
             message(STATUS "Found WIFI_PASSWORD.")
             target_compile_definitions(hid_proxy PRIVATE "WIFI_PASSWORD=\"${WIFI_PASSWORD}\"")
         endif()
+
+        # --- MQTT_BROKER ---
+        if("${ENV_CONTENT}" MATCHES "MQTT_BROKER=([^
+]*)")
+            set(MQTT_BROKER "${CMAKE_MATCH_1}")
+            string(STRIP "${MQTT_BROKER}" MQTT_BROKER)
+
+            # Strip comments (everything after #)
+            string(REGEX REPLACE "#.*$" "" MQTT_BROKER "${MQTT_BROKER}")
+            string(STRIP "${MQTT_BROKER}" MQTT_BROKER)
+
+            # Unquote if quoted
+            string(REGEX MATCH "^\"(.*)\"$" _ "${MQTT_BROKER}")
+            if(CMAKE_MATCH_COUNT GREATER 0)
+                set(MQTT_BROKER "${CMAKE_MATCH_1}")
+            else()
+                string(REGEX MATCH "^'(.*)'$" _ "${MQTT_BROKER}")
+                if(CMAKE_MATCH_COUNT GREATER 0)
+                    set(MQTT_BROKER "${CMAKE_MATCH_1}")
+                endif()
+            endif()
+
+            message(STATUS "Found MQTT_BROKER: ${MQTT_BROKER}")
+            target_compile_definitions(hid_proxy PRIVATE "MQTT_BROKER=\"${MQTT_BROKER}\"")
+        endif()
+
+        # --- MQTT_PORT ---
+        if("${ENV_CONTENT}" MATCHES "MQTT_PORT=([^
+]*)")
+            set(MQTT_PORT "${CMAKE_MATCH_1}")
+            string(STRIP "${MQTT_PORT}" MQTT_PORT)
+            # Strip comments
+            string(REGEX REPLACE "#.*$" "" MQTT_PORT "${MQTT_PORT}")
+            string(STRIP "${MQTT_PORT}" MQTT_PORT)
+            message(STATUS "Found MQTT_PORT: ${MQTT_PORT}")
+            target_compile_definitions(hid_proxy PRIVATE "MQTT_PORT=${MQTT_PORT}")
+        endif()
+
+        # --- MQTT_USE_TLS ---
+        if("${ENV_CONTENT}" MATCHES "MQTT_USE_TLS=([^
+]*)")
+            set(MQTT_USE_TLS "${CMAKE_MATCH_1}")
+            string(STRIP "${MQTT_USE_TLS}" MQTT_USE_TLS)
+            # Strip comments
+            string(REGEX REPLACE "#.*$" "" MQTT_USE_TLS "${MQTT_USE_TLS}")
+            string(STRIP "${MQTT_USE_TLS}" MQTT_USE_TLS)
+            string(TOUPPER "${MQTT_USE_TLS}" MQTT_USE_TLS_UPPER)
+            if("${MQTT_USE_TLS_UPPER}" STREQUAL "TRUE" OR "${MQTT_USE_TLS_UPPER}" STREQUAL "1")
+                message(STATUS "MQTT TLS enabled")
+                target_compile_definitions(hid_proxy PRIVATE "MQTT_USE_TLS=1")
+            endif()
+        endif()
+
+        # --- MQTT_USERNAME ---
+        if("${ENV_CONTENT}" MATCHES "MQTT_USERNAME=([^
+]*)")
+            set(MQTT_USERNAME "${CMAKE_MATCH_1}")
+            string(STRIP "${MQTT_USERNAME}" MQTT_USERNAME)
+            # Strip comments
+            string(REGEX REPLACE "#.*$" "" MQTT_USERNAME "${MQTT_USERNAME}")
+            string(STRIP "${MQTT_USERNAME}" MQTT_USERNAME)
+
+            # Unquote if quoted
+            string(REGEX MATCH "^\"(.*)\"$" _ "${MQTT_USERNAME}")
+            if(CMAKE_MATCH_COUNT GREATER 0)
+                set(MQTT_USERNAME "${CMAKE_MATCH_1}")
+            else()
+                string(REGEX MATCH "^'(.*)'$" _ "${MQTT_USERNAME}")
+                if(CMAKE_MATCH_COUNT GREATER 0)
+                    set(MQTT_USERNAME "${CMAKE_MATCH_1}")
+                endif()
+            endif()
+
+            message(STATUS "Found MQTT_USERNAME: ${MQTT_USERNAME}")
+            target_compile_definitions(hid_proxy PRIVATE "MQTT_USERNAME=\"${MQTT_USERNAME}\"")
+        endif()
+
+        # --- MQTT_PASSWORD ---
+        if("${ENV_CONTENT}" MATCHES "MQTT_PASSWORD=([^
+]*)")
+            set(MQTT_PASSWORD "${CMAKE_MATCH_1}")
+            string(STRIP "${MQTT_PASSWORD}" MQTT_PASSWORD)
+            # Strip comments
+            string(REGEX REPLACE "#.*$" "" MQTT_PASSWORD "${MQTT_PASSWORD}")
+            string(STRIP "${MQTT_PASSWORD}" MQTT_PASSWORD)
+
+            # Unquote if quoted
+            string(REGEX MATCH "^\"(.*)\"$" _ "${MQTT_PASSWORD}")
+            if(CMAKE_MATCH_COUNT GREATER 0)
+                set(MQTT_PASSWORD "${CMAKE_MATCH_1}")
+            else()
+                string(REGEX MATCH "^'(.*)'$" _ "${MQTT_PASSWORD}")
+                if(CMAKE_MATCH_COUNT GREATER 0)
+                    set(MQTT_PASSWORD "${CMAKE_MATCH_1}")
+                endif()
+            endif()
+
+            message(STATUS "Found MQTT_PASSWORD")
+            target_compile_definitions(hid_proxy PRIVATE "MQTT_PASSWORD=\"${MQTT_PASSWORD}\"")
+        endif()
     else()
-        message(STATUS ".env file not found, skipping build-time WiFi config.")
+        message(STATUS ".env file not found, skipping build-time WiFi/MQTT config.")
     endif()
 endif()
 
@@ -233,5 +353,11 @@ endif()
 if(ENABLE_NFC)
     target_compile_definitions(hid_proxy PRIVATE ENABLE_NFC=1)
     message(STATUS "NFC support enabled")
+endif()
+
+# Pass BOARD_WS_2350 to source code as a preprocessor macro
+if(BOARD_WS_2350)
+    target_compile_definitions(hid_proxy PRIVATE BOARD_WS_2350=1)
+    message(STATUS "Waveshare RP2350-USB-A board selected (USB-A on GPIO13)")
 endif()
 

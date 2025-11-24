@@ -14,6 +14,7 @@
 #endif
 
 #define LOG_INFO(...) printf(__VA_ARGS__)
+#define LOG_WARNING(...) printf(__VA_ARGS__)
 #define LOG_ERROR(...) printf(__VA_ARGS__)
 
 #endif //HID_PROXY_LOGGING_H

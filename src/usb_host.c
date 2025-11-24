@@ -11,6 +11,11 @@
 #include "pico.h"
 #include <stdio.h>
 #include "usb_host.h"
+#include "usb_descriptors.h"
+#include "hardware/gpio.h"
+#ifdef PICO_CYW43_SUPPORTED
+#include "pico/cyw43_arch.h"
+#endif
 
 _Noreturn void core1_loop();
 
@@ -23,6 +28,10 @@ static struct {
     uint8_t report_count;
     tuh_hid_report_info_t report_info[MAX_REPORT];
 } hid_info[CFG_TUH_HID];
+
+// Debug: track if any USB device has ever been detected
+volatile bool usb_device_ever_mounted = false;
+volatile uint32_t usb_mount_count = 0;
 
 
 
@@ -42,8 +51,14 @@ void core1_main() {
 
     LOG_INFO("Core 1: Configuring PIO-USB\n");
     pio_usb_configuration_t pio_cfg = PIO_USB_DEFAULT_CONFIG;
-    // Use GPIO2/3 for USB, leaving 0/1 available for UART if needed.
+#ifdef BOARD_WS_2350
+    // Waveshare RP2350-USB-A: USB-A socket is connected to GPIO12 (D+) and GPIO13 (D-) per schematic
+    // Use GPIO12 for D+ (D- is automatically D+ + 1 = GPIO13)
+    pio_cfg.pin_dp = 12;
+#else
+    // Standard Pico boards: Use GPIO2/3 for USB, leaving 0/1 available for UART if needed.
     pio_cfg.pin_dp = 2;
+#endif
     // Use DMA channel 2 instead of 0 to avoid conflict with CYW43 WiFi
     pio_cfg.tx_ch = 2;
     LOG_INFO("Core 1: pio_cfg.pin_dp = %d, tx_ch = %d\n", pio_cfg.pin_dp, pio_cfg.tx_ch);
@@ -74,11 +89,20 @@ void core1_main() {
 }
 
 _Noreturn void core1_loop() {
+    extern volatile bool usb_suspended;
+
     while (true) {
         tuh_task(); // tinyusb host task
-        uint8_t leds;
-        if (queue_try_remove(&leds_queue, &leds)) {
-            tuh_hid_set_report(1, 0, 0, HID_REPORT_TYPE_OUTPUT, &leds, sizeof(leds));
+
+        // Only update LEDs when not suspended to save power
+        if (!usb_suspended) {
+            uint8_t leds;
+            if (queue_try_remove(&leds_queue, &leds)) {
+                tuh_hid_set_report(1, 0, 0, HID_REPORT_TYPE_OUTPUT, &leds, sizeof(leds));
+            }
+        } else {
+            // Sleep when suspended (wake on keyboard input interrupt)
+            __wfe();
         }
     }
 }
@@ -92,6 +116,10 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_re
     (void) desc_report;
     (void) desc_len;
 
+    // Track USB device mounts for debugging
+    usb_device_ever_mounted = true;
+    usb_mount_count++;
+
     // Interface protocol (hid_interface_protocol_enum_t)
     const char *protocol_str[] = {"None", "Keyboard", "Mouse"};
     uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
@@ -101,6 +129,16 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_re
 
     LOG_INFO("[%04x:%04x][%u] HID Interface%u, Protocol = %s\r\n", vid, pid, dev_addr, instance, protocol_str[itf_protocol]);
     hex_dump(desc_report, desc_len);
+
+    // Turn off built-in LED when keyboard is connected
+    if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD) {
+#ifdef PICO_CYW43_SUPPORTED
+        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);  // Turn off CYW43 LED on Pico W
+#else
+        gpio_put(25, 0);  // Turn off GPIO25 LED on Pico/Pico2
+#endif
+        LOG_INFO("Keyboard connected - built-in LED turned off\n");
+    }
 
     // By default, host stack will use activate boot protocol on supported interface.
     // Therefore, for this simple example, we only need to parse generic report descriptor (with built-in parser)
@@ -126,7 +164,7 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
 }
 
 void handle_mouse_report(hid_report_t *report) {
-    // Log, but otherwise send straight to the host.
+    // Log and forward mouse reports to host
     hid_mouse_report_t mouse = report->data.mouse;
     char l = mouse.buttons & MOUSE_BUTTON_LEFT ? 'L' : '-';
     char m = mouse.buttons & MOUSE_BUTTON_MIDDLE ? 'M' : '-';
@@ -135,7 +173,9 @@ void handle_mouse_report(hid_report_t *report) {
     (void) l; (void) m; (void) r;
 
     LOG_DEBUG("[%u] %c%c%c %4d %4d %4d\n", (*report).dev_addr, l, m, r, (*report).data.mouse.x, (*report).data.mouse.y, (*report).data.mouse.wheel);
-    // TODO add_to_host_queue(report->instance, REPORT_ID_MOUSE, len, &report->data);
+
+    // Forward mouse report to host (realtime - mouse movement must not block)
+    add_to_host_queue_realtime(report->instance, ITF_NUM_MOUSE, sizeof(hid_mouse_report_t), &report->data.mouse);
 }
 
 static void handle_generic_report(hid_report_t report) {
@@ -193,7 +233,8 @@ static void handle_generic_report(hid_report_t report) {
 
             default: {
                 LOG_ERROR("TODO - I don't think this is going to work\n");
-                add_to_host_queue(report.instance, 99, report.len, bytes);
+                // Generic HID passthrough - use realtime to avoid blocking
+                add_to_host_queue_realtime(report.instance, 99, report.len, bytes);
                 break;
             }
         }
@@ -214,6 +255,12 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
     to_tud.dev_addr = dev_addr;
     to_tud.len = len;
     memcpy(&to_tud.data, report, len);
+
+    // Count keyboard reports received from physical keyboard
+    uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
+    if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD) {
+        keystrokes_received_from_physical++;
+    }
 
     queue_add_blocking(&keyboard_to_tud_queue, &to_tud);
 

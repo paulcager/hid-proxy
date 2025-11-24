@@ -6,17 +6,43 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a **proof-of-concept** USB HID proxy for Raspberry Pi Pico W that intercepts keyboard input between a physical keyboard and host computer. It provides encrypted storage of key definitions (text expansion/macros) in flash memory, with optional NFC tag authentication and WiFi-based configuration via HTTP API.
 
-**WARNING**: This is explicitly marked as "Do NOT use in production" with known security issues including lack of buffer overflow protection and basic encryption implementation.
+**IMPORTANT: Backward Compatibility Policy**
+
+This is a personal project with a single user. **Backward compatibility is NOT required.** Breaking changes to storage formats, keydef structures, or configuration are acceptable. Users can always wipe the device (both-shifts + DEL) and reconfigure from scratch. When implementing new features:
+
+- ✅ **DO**: Make clean architectural changes that improve the codebase
+- ✅ **DO**: Change storage formats if it makes the design better
+- ✅ **DO**: Break APIs between firmware versions
+- ❌ **DON'T**: Add complexity just to maintain backward compatibility
+- ❌ **DON'T**: Keep migration code after initial implementation
+
+When making breaking changes, simply document in MIGRATION_NOTES.md that users should wipe and reconfigure.
 
 ## Board Support
 
 **Supported Hardware**:
-- Raspberry Pi Pico (RP2040, no WiFi)
-- Raspberry Pi Pico W (RP2040 with WiFi/HTTP)
-- Raspberry Pi Pico2 (RP2350, no WiFi) - **EXPERIMENTAL**
-- Raspberry Pi Pico2 W (RP2350 with WiFi/HTTP) - **EXPERIMENTAL**
+- ✅ Raspberry Pi Pico (RP2040, no WiFi) - **WORKING**
+- ✅ Raspberry Pi Pico W (RP2040 with WiFi/HTTP) - **WORKING**
+- ❌ Raspberry Pi Pico2 (RP2350, no WiFi) - **NOT WORKING** (PIO-USB issues)
+- ❌ Raspberry Pi Pico2 W (RP2350 with WiFi/HTTP) - **NOT WORKING** (PIO-USB issues)
+- ❌ Waveshare RP2350-USB-A (RP2350, no WiFi, USB-A host port on GPIO12/13) - **NOT WORKING** (PIO-USB issues)
 
-**Pico2 (RP2350) Status**: Build support is provided via Pico SDK 2.2.0, but PIO-USB compatibility is uncertain and depends on GPIO selection. The project uses GPIO2/3 for PIO-USB host stack. Test thoroughly before deployment.
+**RP2350 Status - NOT CURRENTLY FUNCTIONAL**:
+
+Build support for RP2350 boards exists via Pico SDK 2.2.0, but **USB keyboards are not detected on any RP2350 hardware tested**. The issue manifests as:
+- Core 1 initializes successfully
+- tuh_init() completes without errors
+- `tuh_hid_mount_cb()` never fires (no USB devices detected)
+- Keyboards work fine on the same hardware when plugged into RP2040 boards
+
+**Possible causes**:
+1. RP2350B silicon bug (Erratum E9) affecting PIO timing
+2. Incompatibility between Pico-PIO-USB library and RP2350 architecture
+3. GPIO/timing configuration issues specific to RP2350
+
+**Current status**: RP2350 support is **on hold** until PIO-USB library maintainers address RP2350 compatibility or silicon bugs are resolved. Use RP2040-based boards (Pico/Pico W) for production deployments.
+
+**Waveshare Board Features**: The RP2350-USB-A build includes WS2812 RGB LED support (GPIO16) for visual status feedback. Build system is complete but non-functional due to PIO-USB issue above.
 
 ## Architecture
 
@@ -41,9 +67,17 @@ Communication between cores uses three queues:
 - `seen_magic`/`expecting_command`: "Double shift" command mode activated
 - `defining`: Recording new key definition
 
-**Key Definitions** (key_defs.c): Stores mappings from single keystrokes to sequences of HID reports. Definitions are loaded on-demand from kvstore as individual `keydef_t` structures.
+**Key Definitions** (key_defs.c): Stores mappings from single keystrokes to sequences of **mixed actions** (HID reports, MQTT publishes, delays, mouse movements). Definitions are loaded on-demand from kvstore as individual `keydef_t` structures.
 
-**Macro Parsing/Serialization** (macros.c/h): Provides text format parser and serializer to convert between binary keydef format and human-readable text format with syntax: `[public|private] trigger { "text" MNEMONIC ^C [mod:key] }`. Used for HTTP-based configuration via `/macros.txt` endpoint.
+**Action System** (hid_proxy.h): Keydefs use an extensible action-based architecture:
+- `ACTION_HID_REPORT`: Send keyboard HID report to host
+- `ACTION_MQTT_PUBLISH`: Publish message to MQTT broker (WiFi boards only)
+- `ACTION_DELAY`: Delay in milliseconds (future)
+- `ACTION_MOUSE_MOVE`: Mouse movement/clicks (future, see MOUSE_SUPPORT.md)
+
+Each keydef contains an array of `action_t` structures, allowing macros to mix keyboard input with MQTT automation, delays, and future mouse actions.
+
+**Macro Parsing/Serialization** (macros.c/h): Provides text format parser and serializer to convert between binary keydef format and human-readable text format with syntax: `[public|private] trigger { "text" MNEMONIC ^C MQTT("topic", "msg") [mod:key] }`. Used for HTTP-based configuration via `/macros.txt` endpoint.
 
 **Storage** (kvstore_init.c, keydef_store.c): Uses pico-kvstore for persistent storage with encryption:
 - blockdevice_flash: Raw flash access with wear leveling
@@ -65,7 +99,19 @@ On first use, any password is accepted and its hash is stored. Subsequent unlock
 
 **Encryption** (encryption.c/h): PBKDF2 (SHA256-based) key derivation from passphrase. The derived 16-byte key is used by kvstore_init.c for AES-128-GCM operations via mbedtls. Legacy `store_encrypt()`/`store_decrypt()` functions marked obsolete.
 
-**Flash Storage** (flash.c): Legacy file with backward-compatibility stubs. Functions like `save_state()` and `read_state()` are now no-ops; kvstore handles all persistence. `init_state()` clears kvstore and resets device to blank state.
+**Flash Storage** (flash.c): Minimal file containing only `init_state()` which clears kvstore and resets device to blank state. All persistence is handled by kvstore.
+
+**RGB LED Status (Waveshare RP2350-USB-A only)** (ws2812_led.c/h): Provides visual feedback via WS2812 RGB LED on GPIO16. Automatically reflects device state:
+- 🔴 **RED**: Device locked (encryption key not in memory)
+- 🟢 **GREEN**: Device unlocked (normal operation)
+- 🔵 **BLUE**: Entering password or defining key
+- 🟡 **YELLOW**: Command mode active (both shifts pressed)
+- 🟣 **PURPLE**: NFC operation in progress (if NFC enabled)
+- ⚪ **WHITE (dim)**: Idle/blank state or USB suspended
+- 🟠 **ORANGE**: Error indication (brief flash)
+- 🌈 **RAINBOW (pulsing)**: Web access enabled (5-minute configuration window)
+
+LED updates automatically on status changes and runs animation task in main loop. Uses 1 PIO state machine (auto-selected). Conditional compilation with `#ifdef BOARD_WS_2350`.
 
 **NFC Authentication** (nfc_tag.c): *Optional feature, disabled by default.* Interfaces with PN532 NFC reader via I2C (GPIO 4/5) to read/write 16-byte encryption keys from Mifare Classic tags. Supports multiple known authentication keys for tag access. Enable with `--nfc` build flag.
 
@@ -73,15 +119,16 @@ On first use, any password is accepted and its hash is stored. Subsequent unlock
 
 **WiFi Configuration** (wifi_config.c/h): Manages WiFi connection using CYW43 chip on Pico W. Stores WiFi credentials in kvstore (`wifi.ssid`, `wifi.password`, `wifi.country`) unencrypted. WiFi credentials are not considered sensitive in this application context. Provides non-blocking WiFi connection that runs in background without affecting keyboard functionality.
 
-**HTTP Server** (http_server.c/h): Implements lwIP-based HTTP server for macro configuration. Provides REST-like endpoints for GET/POST of macros in text format. Integrates with physical unlock system (both-shifts+SPACE) for security.
+**HTTP Server** (http_server.c/h): Implements lwIP-based HTTP server for macro configuration. Provides REST-like endpoints for GET/POST of macros in text format. Integrates with physical unlock system (both-shifts+SPACE) for security. Includes POST /unlock endpoint for remote unlocking with password (always available when WiFi connected).
 
-**Web Access Control**: Requires physical presence (Double-shift then SPACE) to enable web access for 5 minutes.
-Prevents remote configuration without physical keyboard access.
+**Web Access Control**: Requires physical presence (Double-shift then SPACE) to enable web access for 5 minutes. Prevents remote configuration without physical keyboard access.
+
+**MQTT Client** (mqtt_client.c/h): Publishes lock/unlock events to MQTT broker for Home Assistant integration. Uses unique topic names based on board ID (e.g., `hidproxy-a3f4/lock`). Supports optional TLS for secure connections. Configured via .env file (MQTT_BROKER, MQTT_PORT, MQTT_USE_TLS). Non-blocking operation runs in lwIP background tasks.
 
 ## Building
 
 ### Prerequisites
-- **Raspberry Pi Pico/Pico W/Pico2/Pico2 W**
+- **Raspberry Pi Pico/Pico W/Pico2/Pico2 W/Waveshare RP2350-USB-A**
 - Docker (recommended) or local Pico SDK 2.2.0+
 - Submodules initialized: `Pico-PIO-USB`, `pico-kvstore`, `tiny-AES-c`, `tinycrypt`
 
@@ -93,8 +140,9 @@ Prevents remote configuration without physical keyboard access.
 # Build for specific board
 ./build.sh --board pico         # RP2040, no WiFi
 ./build.sh --board pico_w       # RP2040 with WiFi (default)
-./build.sh --board pico2        # RP2350, no WiFi (EXPERIMENTAL)
-./build.sh --board pico2_w      # RP2350 with WiFi (EXPERIMENTAL)
+./build.sh --board pico2        # RP2350, no WiFi
+./build.sh --board pico2_w      # RP2350 with WiFi
+./build.sh --board ws_2350      # Waveshare RP2350-USB-A (RP2350, no WiFi, USB-A on GPIO12/13)
 
 # Other options
 ./build.sh --stdio              # Enable USB CDC stdio for debugging
@@ -113,6 +161,8 @@ mkdir build && cd build
 
 # Configure for specific board
 cmake -DPICO_BOARD=pico_w ..    # or pico, pico2, pico2_w
+# For Waveshare RP2350-USB-A:
+cmake -DPICO_BOARD=pico2 -DBOARD_WS_2350=ON ..
 
 # Build
 make -j$(nproc)
@@ -143,6 +193,7 @@ The UI is activated by pressing both shift keys simultaneously, then releasing a
 - `END`: Lock key definitions
 - `=`: Start defining/redefining a key (interactive mode)
 - `SPACE`: Print all key definitions to serial console (debug/diagnostic), and enable web access for 5 minutes (WiFi/HTTP configuration)
+- `F12`: Start WiFi configuration console via UART (Pico W only)
 - `PRINT`: Write encryption key to NFC tag
 
 ## Special Key Combinations (Both Shifts Held)
@@ -154,23 +205,26 @@ These commands activate while holding both shift keys (not released):
 ## Macro Text Format
 
 The text format for macros (used for HTTP/network configuration):
-- `[public|private] trigger { commands... }` - whitespace flexible
+- `[public|private] trigger { actions... }` - whitespace flexible
 - `[public]` - keydef works even when device is locked (no sensitive data)
 - `[private]` - keydef requires device unlock (default, for passwords/secrets)
 - `"text"` - quoted strings for typing (supports `\"` and `\\` escapes)
 - `MNEMONIC` - special keys (ENTER, ESC, TAB, F1-F24, arrows, PAGEUP, etc.)
 - `^C` - Ctrl+key shorthand (^A through ^Z)
 - `[mod:key]` - explicit HID report in hex
+- `MQTT("topic", "message")` - publish MQTT message (requires WiFi/MQTT configured)
 - Triggers: single char (`a`), mnemonic (`F1`), or hex (`0x04`)
 
-**Example:**
+**Examples:**
 ```
 [public] a { "Hello!" }
 [private] F1 { "MyPassword123" ENTER }
 [public] F2 { ^C "text" ^V }
+[public] F5 { MQTT("hidproxy/light/bedroom", "ON") }
+[public] F6 { "Lights off" ENTER MQTT("homeassistant/scene", "sleep") }
 ```
 
-**Note:** Public keydefs can be executed when the device is locked (via double-shift + key), while private keydefs require the device to be unlocked first.
+**Note:** Public keydefs can be executed when the device is locked (via double-shift + key), while private keydefs require the device to be unlocked first. MQTT actions require WiFi and MQTT broker configuration (see MQTT_SETUP.md).
 
 ## Important Code Locations
 
@@ -186,8 +240,9 @@ The text format for macros (used for HTTP/network configuration):
 - Macro parser: `parse_macros_to_kvstore()` in macros.c (parses text format, saves to kvstore)
 - Macro serializer: `serialize_macros_from_kvstore()` in macros.c (loads from kvstore, outputs text)
 - PBKDF2 key derivation: `enc_derive_key_from_password()` in encryption.c
-- Lock function: `lock()` in hid_proxy.c (clears encryption keys from memory)
-- Legacy stubs: `store_encrypt()`/`store_decrypt()` in encryption.c, `save_state()`/`read_state()` in flash.c
+- Lock function: `lock()` in hid_proxy.c (clears encryption keys from memory, publishes MQTT event)
+- Unlock function: `unlock()` in hid_proxy.c (sets state to normal, publishes MQTT event)
+- Legacy stubs: `store_encrypt()`/`store_decrypt()` in encryption.c (marked obsolete, kept for backward compatibility)
 - NFC state machine: `nfc_task()` in nfc_tag.c:373
 - USB host enumeration: `tuh_hid_mount_cb()` in usb_host.c:74
 - WiFi initialization: `wifi_init()` in wifi_config.c
@@ -195,7 +250,14 @@ The text format for macros (used for HTTP/network configuration):
 - HTTP server init: `http_server_init()` in http_server.c
 - HTTP GET /macros.txt: `fs_open_custom()` in http_server.c
 - HTTP POST /macros.txt: `http_post_*()` handlers in http_server.c
+- HTTP POST /unlock: `httpd_post_finished()` in http_server.c (remote password unlock)
 - HTTP GET /status: `status_cgi_handler()` in http_server.c
+- MQTT client init: `mqtt_client_init()` in mqtt_client.c (connects to broker, sets up LWT)
+- MQTT publish: `mqtt_publish_lock_state()` in mqtt_client.c (publishes lock/unlock events)
+- RGB LED initialization: `ws2812_led_init()` in ws2812_led.c (auto-selects PIO/SM, GPIO16)
+- RGB LED status update: `ws2812_led_update_status()` in ws2812_led.c (maps device status to color)
+- RGB LED animation: `ws2812_led_task()` in ws2812_led.c (handles rainbow pulse for web access)
+- 5-second status message: main loop in hid_proxy.c (prints comprehensive status after boot)
 
 ## Configuration Constants
 
@@ -204,7 +266,10 @@ The text format for macros (used for HTTP/network configuration):
 - `IDLE_TIMEOUT_MILLIS`: 120 minutes before auto-lock (hid_proxy.h:20)
 - Web access timeout: 5 minutes (wifi_config.c:web_access_enable)
 - NFC key storage address: Block `0x3A` on Mifare tag (nfc_tag.c:18)
-- I2C pins: SDA=4, SCL=5; PIO-USB pins: DP=2 (nfc_tag.c:12-13, usb_host.c:38)
+- I2C pins: SDA=4, SCL=5 (nfc_tag.c:12-13)
+- PIO-USB pins: DP=2 (standard Pico boards), DP=12 (Waveshare RP2350-USB-A) (usb_host.c:46-53)
+- WS2812 RGB LED pin: GPIO16 (Waveshare RP2350-USB-A only) (ws2812_led.c:13)
+- Status message delay: 5 seconds after boot (hid_proxy.c main loop)
 - mDNS hostname: `hidproxy-XXXX.local` where XXXX = last 4 hex digits of board ID (wifi_config.c)
 - Keydef key format: `keydef.0xHH` where HH is HID code (keydef_store.c)
 - WiFi key format: `wifi.ssid`, `wifi.password`, `wifi.country`, `wifi.enabled` (wifi_config.c)
@@ -214,16 +279,16 @@ The text format for macros (used for HTTP/network configuration):
 
 ## Known Issues/TODOs
 
-From README.md, code comments, and KVSTORE_STATUS.md:
+From README.md and code comments:
 1. ~~No buffer overflow protection on keystroke storage~~ ✅ Fixed: Keydef size limits enforced
 2. ~~Basic encryption implementation (not production-ready)~~ ✅ Fixed: Now uses AES-128-GCM with authentication and password validation
 3. ~~WiFi 10-second startup delay~~ ✅ Fixed: Removed
 4. ~~kb.local_store memory allocation~~ ✅ Fixed: Removed, keydefs loaded on-demand from kvstore
-5. Poor user interface with no status feedback (no visual feedback for lock/unlock state)
-6. Password change not implemented (must erase device to change password)
-7. HTTP POST /macros.txt not tested (code written but needs validation)
-8. Queue overflow handling needed (hid_proxy.c comment)
-9. Legacy code can be removed: sane.c, old parse_macros()/serialize_macros(), store_t struct
+5. ~~Password change not implemented~~ ✅ Fixed: kvstore_change_password() with full re-encryption
+6. ~~Queue overflow handling needed~~ ✅ Fixed: Backpressure for macros, graceful degradation for passthrough
+7. Poor user interface with no status feedback (no visual feedback for lock/unlock state)
+8. HTTP POST /macros.txt not tested (code written but needs validation)
+9. Legacy code can be removed: sane.c, old parse_macros()/serialize_macros(), store_t struct (kept for unit tests)
 
 ## WiFi/HTTP Configuration
 
@@ -255,7 +320,13 @@ curl http://hidproxy-XXXX.local/status
 ## Future Development
 
 See CONFIGURATION_OPTIONS.md for additional planned features:
-- Serial console for WiFi setup (currently requires manual flash programming or a .env file at build time)
-- MQTT publishing of keystroke events to Home Assistant
+- ~~Serial console for WiFi setup~~ ✅ **Implemented**: Interactive WiFi config via UART (both-shifts+F12)
+- ~~MQTT publishing of keystroke events to Home Assistant~~ ✅ **Implemented**: Lock/unlock events now published (see MQTT_SETUP.md)
+- ~~Password change support~~ ✅ **Implemented**: Full re-encryption with new password (both-shifts+INSERT)
+- ~~Mouse forwarding~~ ✅ **Implemented**: Mouse reports forwarded in passthrough mode
+- **Mouse macros**: Include mouse movements/clicks in key definitions (see MOUSE_SUPPORT.md for technical details)
+- MQTT publishing of all keystroke events (optional, privacy concerns)
+- MQTT configuration of macros (subscribe to config topic)
 - Simple web UI for in-browser macro editing
 - HTTP Basic Auth (optional secondary protection layer)
+- MQTT auto-discovery for Home Assistant

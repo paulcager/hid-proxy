@@ -26,7 +26,7 @@ static void keydef_make_key(uint8_t trigger, char *key_buf) {
 }
 
 keydef_t *keydef_alloc(uint8_t trigger, uint16_t count) {
-    size_t size = sizeof(keydef_t) + count * sizeof(hid_keyboard_report_t);
+    size_t size = sizeof(keydef_t) + count * sizeof(action_t);
     keydef_t *keydef = (keydef_t *)malloc(size);
     if (keydef == NULL) {
         LOG_ERROR("keydef_alloc: malloc failed for %u bytes\n", size);
@@ -35,8 +35,8 @@ keydef_t *keydef_alloc(uint8_t trigger, uint16_t count) {
 
     memset(keydef, 0, size);
     keydef->trigger = trigger;
-    keydef->count = count;
-    keydef->require_unlock = true;  // Phase 4: interactive keydefs default to private
+    keydef->count = 0;  // Actions will be added incrementally
+    keydef->require_unlock = true;  // Interactive keydefs default to private
 
     return keydef;
 }
@@ -72,8 +72,8 @@ keydef_t *keydef_load(uint8_t trigger) {
     printf("keydef_load: Attempting to load keydef '%s' (0x%02X)\n", key, trigger);
 
     // Allocate a reasonable buffer to read into
-    // (Max keydef: 6 bytes header + 64 reports * 8 bytes = 518 bytes)
-    size_t max_size = sizeof(keydef_t) + 64 * sizeof(hid_keyboard_report_t);
+    // (Max keydef: header + 64 actions * ~130 bytes = ~8.5KB worst case for all-MQTT)
+    size_t max_size = sizeof(keydef_t) + 64 * sizeof(action_t);
     uint8_t *temp_buffer = (uint8_t *)malloc(max_size);
     if (temp_buffer == NULL) {
         printf("keydef_load: Failed to allocate temp buffer\n");

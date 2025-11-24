@@ -4,6 +4,8 @@
 
 #include "hid_proxy.h"
 #include "encryption.h"
+#include "kvstore_init.h"
+#include <string.h>
 
 #define CTR 1
 #define CBC 0
@@ -60,4 +62,37 @@ void enc_get_key(uint8_t *data, size_t length) {
 void enc_clear_key() {
     memset(key, 0, sizeof key);
     enc_clear_password();
+}
+
+bool enc_unlock_with_password(const char *password) {
+    if (!password) {
+        return false;
+    }
+
+    // Clear any existing password/key
+    enc_clear_key();
+
+    // Add password bytes
+    size_t len = strlen(password);
+    for (size_t i = 0; i < len && i < sizeof(password_buf); i++) {
+        enc_add_password_byte((uint8_t)password[i]);
+    }
+
+    // Derive key from password
+    enc_derive_key_from_password();
+
+    // Try to unlock with the derived key
+    uint8_t derived_key[16];
+    enc_get_key(derived_key, sizeof(derived_key));
+    bool success = kvstore_set_encryption_key(derived_key);
+
+    // Clear derived key from stack
+    memset(derived_key, 0, sizeof(derived_key));
+
+    if (!success) {
+        // Wrong password - clear the key
+        enc_clear_key();
+    }
+
+    return success;
 }

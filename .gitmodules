@@ -21,4 +21,4 @@
 	url = https://github.com/rppicomidi/cdc_stdio_lib.git
 [submodule "pico-kvstore"]
 	path = pico-kvstore
-	url = git@github.com:oyama/pico-kvstore.git
+	url = git@github.com:paulcager/pico-kvstore.git
