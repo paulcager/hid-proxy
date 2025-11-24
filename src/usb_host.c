@@ -12,6 +12,10 @@
 #include <stdio.h>
 #include "usb_host.h"
 #include "usb_descriptors.h"
+#include "hardware/gpio.h"
+#ifdef PICO_CYW43_SUPPORTED
+#include "pico/cyw43_arch.h"
+#endif
 
 _Noreturn void core1_loop();
 
@@ -125,6 +129,16 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_re
 
     LOG_INFO("[%04x:%04x][%u] HID Interface%u, Protocol = %s\r\n", vid, pid, dev_addr, instance, protocol_str[itf_protocol]);
     hex_dump(desc_report, desc_len);
+
+    // Turn off built-in LED when keyboard is connected
+    if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD) {
+#ifdef PICO_CYW43_SUPPORTED
+        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);  // Turn off CYW43 LED on Pico W
+#else
+        gpio_put(25, 0);  // Turn off GPIO25 LED on Pico/Pico2
+#endif
+        LOG_INFO("Keyboard connected - built-in LED turned off\n");
+    }
 
     // By default, host stack will use activate boot protocol on supported interface.
     // Therefore, for this simple example, we only need to parse generic report descriptor (with built-in parser)
@@ -241,6 +255,12 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
     to_tud.dev_addr = dev_addr;
     to_tud.len = len;
     memcpy(&to_tud.data, report, len);
+
+    // Count keyboard reports received from physical keyboard
+    uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
+    if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD) {
+        keystrokes_received_from_physical++;
+    }
 
     queue_add_blocking(&keyboard_to_tud_queue, &to_tud);
 

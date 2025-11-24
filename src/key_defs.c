@@ -265,7 +265,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     lock();  // Sets LED to off (0ms) internally
                     return;
 
-                case HID_KEY_W:
+                case HID_KEY_F12:
 #ifdef PICO_CYW43_SUPPORTED
                     // WiFi configuration console
                     printf("\nStarting WiFi configuration...\n");
@@ -483,6 +483,17 @@ void print_keydefs() {
         printf("Error: Failed to serialize macros\n");
     }
     printf("==============================\n\n");
+
+    // Print diagnostic counters
+    printf("=== Diagnostic Counters ===\n");
+    printf("Keystrokes received from physical keyboard: %lu\n", (unsigned long)keystrokes_received_from_physical);
+    printf("Keystrokes sent to host computer: %lu\n", (unsigned long)keystrokes_sent_to_host);
+    printf("Queue drops (realtime): %lu\n", (unsigned long)queue_drops_realtime);
+    printf("Queue depths: keyboard_to_tud=%d, tud_to_host=%d\n",
+           queue_get_level(&keyboard_to_tud_queue),
+           queue_get_level(&tud_to_physical_host_queue));
+    printf("USB report in progress: %s\n", kb.send_to_host_in_progress ? "YES (stuck?)" : "no");
+    printf("===========================\n\n");
 }
 
 void print_keydef(const keydef_t *def) {

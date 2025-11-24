@@ -193,6 +193,7 @@ The UI is activated by pressing both shift keys simultaneously, then releasing a
 - `END`: Lock key definitions
 - `=`: Start defining/redefining a key (interactive mode)
 - `SPACE`: Print all key definitions to serial console (debug/diagnostic), and enable web access for 5 minutes (WiFi/HTTP configuration)
+- `F12`: Start WiFi configuration console via UART (Pico W only)
 - `PRINT`: Write encryption key to NFC tag
 
 ## Special Key Combinations (Both Shifts Held)
@@ -319,7 +320,7 @@ curl http://hidproxy-XXXX.local/status
 ## Future Development
 
 See CONFIGURATION_OPTIONS.md for additional planned features:
-- ~~Serial console for WiFi setup~~ ✅ **Implemented**: Interactive WiFi config via UART (both-shifts+W)
+- ~~Serial console for WiFi setup~~ ✅ **Implemented**: Interactive WiFi config via UART (both-shifts+F12)
 - ~~MQTT publishing of keystroke events to Home Assistant~~ ✅ **Implemented**: Lock/unlock events now published (see MQTT_SETUP.md)
 - ~~Password change support~~ ✅ **Implemented**: Full re-encryption with new password (both-shifts+INSERT)
 - ~~Mouse forwarding~~ ✅ **Implemented**: Mouse reports forwarded in passthrough mode

@@ -16,7 +16,7 @@ A USB HID keyboard proxy for Raspberry Pi Pico (or Pico W) that intercepts and p
 
 **Pico W exclusive features:**
 - **WiFi/HTTP configuration**: Edit macros via HTTP API without USB re-enumeration
-- **Serial WiFi setup**: Configure WiFi credentials via UART console (both-shifts+W)
+- **Serial WiFi setup**: Configure WiFi credentials via UART console (both-shifts+F12)
 - **Physical web unlock**: Both-shifts+SPACE enables 5-minute web access window
 - **mDNS support**: Access device at `hidproxy-XXXX.local` (XXXX = last 4 digits of board ID)
 - **MQTT integration**: Publish lock/unlock events to Home Assistant (optional, with TLS support)
@@ -149,7 +149,7 @@ To access special functions:
 | `END`    | Lock device and clear decrypted key definitions from memory. Encrypted data in flash is preserved. Re-enter passphrase (double-shift + `ENTER`) to unlock.           |
 | `=`      | Start defining/redefining a key. Next keystroke is the trigger key, following keystrokes are the expansion. End with another double-shift.                           |
 | `SPACE`  | Print all current key definitions to serial console (debug output) and enable web access for 5 minutes. Useful for viewing configured macros via UART.               |
-| `W`      | **Pico W only:** Start WiFi configuration console via serial UART. Configure WiFi SSID, password, and country code interactively. **New!**                           |
+| `F12`    | **Pico W only:** Start WiFi configuration console via serial UART. Configure WiFi SSID, password, and country code interactively. **New!**                           |
 | `PRINT`  | Write the current encryption key to an NFC tag (requires PN532 reader and Mifare Classic tag).                                                                       |
 | `HOME`   | *While holding both shifts:* Reboot into bootloader mode for flashing new firmware.                                                                                  |
 

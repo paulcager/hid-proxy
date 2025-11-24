@@ -136,7 +136,7 @@ typedef struct {
     keydef_t *key_being_defined;
     uint8_t key_being_replayed;
     keydef_t *next_to_replay;
-    bool send_to_host_in_progress;
+    volatile bool send_to_host_in_progress;  // Modified from USB interrupt context (tud_hid_report_complete_cb)
 } kb_t;
 
 extern kb_t kb;
@@ -144,6 +144,11 @@ extern kb_t kb;
 extern queue_t keyboard_to_tud_queue;
 extern queue_t tud_to_physical_host_queue;
 extern queue_t leds_queue;
+
+// Diagnostic counters for keystroke tracking
+extern volatile uint32_t keystrokes_received_from_physical;  // Total reports from physical keyboard
+extern volatile uint32_t keystrokes_sent_to_host;            // Total reports sent to host computer
+extern volatile uint32_t queue_drops_realtime;               // Times we dropped oldest item in realtime queue
 
 // LED control for visual status feedback (asymmetric on/off times)
 extern uint32_t led_on_interval_ms;   // How long LED stays on (ms)

@@ -86,6 +86,11 @@ queue_t tud_to_physical_host_queue;
 // A queue of events from the physical host, to be sent to the physical keyboard.
 queue_t leds_queue;
 
+// Diagnostic counters for keystroke tracking
+volatile uint32_t keystrokes_received_from_physical = 0;  // Total reports from physical keyboard
+volatile uint32_t keystrokes_sent_to_host = 0;            // Total reports sent to host computer
+volatile uint32_t queue_drops_realtime = 0;               // Times we dropped oldest item in realtime queue
+
 // LED control for visual status feedback (Num Lock)
 static uint8_t current_led_state = 0;       // Current LED state to send to keyboard
 static absolute_time_t next_led_toggle;     // When to toggle LED next
@@ -104,6 +109,18 @@ static uint32_t pre_suspend_clock_khz = 0;
 /*------------- LED Status Feedback -------------*/
 
 void update_status_led(void) {
+    // Keep LED ON until a keyboard is connected
+    extern volatile bool usb_device_ever_mounted;
+    if (!usb_device_ever_mounted) {
+        // No keyboard connected yet - keep LED ON
+#ifdef PICO_CYW43_SUPPORTED
+        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
+#else
+        gpio_put(BUILTIN_LED_PIN, 1);
+#endif
+        return;
+    }
+
     if (led_on_interval_ms == 0 && led_off_interval_ms == 0) {
         // LED off (locked/blank state)
         current_led_state = 0;
@@ -231,13 +248,16 @@ int main(void) {
     wifi_init();
     LOG_INFO("WiFi initialization complete\n");
     // CYW43 LED is automatically initialized by wifi_init()
+    // Turn LED ON until keyboard connects
+    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
+    LOG_INFO("Built-in LED ON (will turn off when keyboard connects)\n");
 #else
     LOG_INFO("WiFi not supported on this hardware\n");
     // Initialize built-in LED (GPIO25) on non-WiFi boards
     gpio_init(BUILTIN_LED_PIN);
     gpio_set_dir(BUILTIN_LED_PIN, GPIO_OUT);
-    gpio_put(BUILTIN_LED_PIN, 0);  // Start with LED off
-    LOG_INFO("Built-in LED initialized on GPIO%d\n", BUILTIN_LED_PIN);
+    gpio_put(BUILTIN_LED_PIN, 1);  // Start with LED ON (will turn off when keyboard connects)
+    LOG_INFO("Built-in LED initialized on GPIO%d (ON until keyboard connects)\n", BUILTIN_LED_PIN);
 #endif
 
 #ifdef BOARD_WS_2350
@@ -262,7 +282,6 @@ int main(void) {
 
     LOG_INFO("Starting main event loop (first iteration)\n");
     bool status_message_printed = false;
-    absolute_time_t last_periodic_log = get_absolute_time();
 
     while (true) {
         // Print comprehensive status message after 5 seconds (when USB CDC is ready)
@@ -296,6 +315,14 @@ int main(void) {
 #endif
             printf("State: %s\n", status_string(kb.status));
             printf("Keydefs: %d defined (%d public, %d private)\n", keydef_count, public_count, private_count);
+            printf("Keystrokes: %lu received, %lu sent, %lu dropped\n",
+                   (unsigned long)keystrokes_received_from_physical,
+                   (unsigned long)keystrokes_sent_to_host,
+                   (unsigned long)queue_drops_realtime);
+            printf("Queue depths: keyboard_to_tud=%d, tud_to_host=%d\n",
+                   queue_get_level(&keyboard_to_tud_queue),
+                   queue_get_level(&tud_to_physical_host_queue));
+            printf("USB report in progress: %s\n", kb.send_to_host_in_progress ? "YES (stuck?)" : "no");
 #ifdef PICO_CYW43_SUPPORTED
             if (wifi_is_connected()) {
                 printf("WiFi: Connected\n");
@@ -305,26 +332,6 @@ int main(void) {
 #endif
             printf("Uptime: 5 seconds\n");
             printf("====================================\n");
-            printf("\n");
-        }
-
-        // Periodic diagnostic logging every 10 seconds to help debug USB host issues
-        if (absolute_time_diff_us(last_periodic_log, get_absolute_time()) > 10000000) {
-            last_periodic_log = get_absolute_time();
-            printf("\n[Periodic] Core 0: Running, status=%s, uptime=%lld sec\n",
-                   status_string(kb.status),
-                   absolute_time_diff_us(start_time, get_absolute_time()) / 1000000);
-#ifdef BOARD_WS_2350
-            printf("[Periodic] Core 1: Should be running USB host on GPIO12 (D+), GPIO13 (D-)\n");
-#else
-            printf("[Periodic] Core 1: Should be running USB host on GPIO2 (D+), GPIO3 (D-)\n");
-#endif
-            printf("[Periodic] USB devices mounted: %lu total (ever=%s)\n",
-                   (unsigned long)usb_mount_count,
-                   usb_device_ever_mounted ? "YES" : "NO");
-            printf("[Periodic] Queue length: keyboard_to_tud=%d, tud_to_host=%d\n",
-                   queue_get_level(&keyboard_to_tud_queue),
-                   queue_get_level(&tud_to_physical_host_queue));
             printf("\n");
         }
 
@@ -449,6 +456,10 @@ void send_report_to_host(send_data_t to_send) {
         hex_dump(to_send.data, to_send.len);
 #endif
         kb.send_to_host_in_progress = true;
+        // Count keyboard reports sent to host
+        if (to_send.report_id == ITF_NUM_KEYBOARD) {
+            keystrokes_sent_to_host++;
+        }
     } else {
         LOG_ERROR("tud_hid_n_report FAILED: %x\n", to_send.report_id);
     }
@@ -483,15 +494,19 @@ void queue_add_with_backpressure(queue_t *q, const void *data) {
 void queue_add_realtime(queue_t *q, const void *data) {
     if (!queue_try_add(q, data)) {
         // Queue full - drop oldest item to make room
+        queue_drops_realtime++;
         uint8_t discard_buffer[sizeof(send_data_t)];  // Max size of any queue item
         if (queue_try_remove(q, discard_buffer)) {
-            LOG_WARNING("Queue overflow - dropped oldest report to make room\n");
+            LOG_WARNING("Queue overflow - dropped oldest report to make room (total drops: %lu)\n",
+                       (unsigned long)queue_drops_realtime);
             // Try again (should succeed now)
             if (!queue_try_add(q, data)) {
-                LOG_ERROR("Queue add failed even after drop - this shouldn't happen\n");
+                LOG_ERROR("Queue add failed even after drop - this shouldn't happen (total drops: %lu)\n",
+                         (unsigned long)queue_drops_realtime);
             }
         } else {
-            LOG_ERROR("Queue full but can't remove item - concurrent access issue?\n");
+            LOG_ERROR("Queue full but can't remove item - concurrent access issue? (total drops: %lu)\n",
+                     (unsigned long)queue_drops_realtime);
         }
     }
 }
