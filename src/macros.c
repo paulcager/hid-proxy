@@ -505,7 +505,7 @@ bool parse_macros_to_kvstore(const char* input_buffer) {
         def->require_unlock = require_unlock;
 
         // Parse commands until '}'
-        void* limit = ((void*)def) + sizeof(keydef_t) + (64 * sizeof(hid_keyboard_report_t));
+        void* limit = ((void*)def) + sizeof(keydef_t) + (64 * sizeof(action_t));
         while (*p && *p != '}') {
             // Skip whitespace
             while (*p && isspace((unsigned char)*p)) p++;
