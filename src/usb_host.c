@@ -56,8 +56,10 @@ void core1_main() {
     // Use GPIO12 for D+ (D- is automatically D+ + 1 = GPIO13)
     pio_cfg.pin_dp = 12;
 #else
-    // Standard Pico boards: Use GPIO2/3 for USB, leaving 0/1 available for UART if needed.
-    pio_cfg.pin_dp = 2;
+    // Standard Pico boards: USB host D+ pin (D- is automatically D+ + 1)
+    // Default: GPIO6/7 (configurable at build time with --usb-pins flag)
+    // Legacy: GPIO2/3 (use --usb-pins 2 for backwards compatibility)
+    pio_cfg.pin_dp = USB_HOST_DP_PIN;
 #endif
     // Use DMA channel 2 instead of 0 to avoid conflict with CYW43 WiFi
     pio_cfg.tx_ch = 2;

@@ -47,6 +47,11 @@ option(ENABLE_NFC "Enable NFC tag authentication support" OFF)
 # Option to enable Waveshare RP2350-USB-A board (changes PIO-USB pins)
 option(BOARD_WS_2350 "Build for Waveshare RP2350-USB-A board" OFF)
 
+# USB host GPIO pin configuration (D+ pin, D- is automatically D++1)
+# Default is GPIO6 for new boards, but can be set to GPIO2 for backwards compatibility
+set(USB_HOST_DP_PIN "6" CACHE STRING "GPIO pin for USB host D+ (D- is D++1)")
+message(STATUS "USB host D+ pin: GPIO${USB_HOST_DP_PIN}")
+
 add_subdirectory("./Pico-PIO-USB" pico_pio_usb)
 
 # Add pico-kvstore for key-value storage with encryption
@@ -360,4 +365,7 @@ if(BOARD_WS_2350)
     target_compile_definitions(hid_proxy PRIVATE BOARD_WS_2350=1)
     message(STATUS "Waveshare RP2350-USB-A board selected (USB-A on GPIO13)")
 endif()
+
+# Pass USB_HOST_DP_PIN to source code as a preprocessor macro
+target_compile_definitions(hid_proxy PRIVATE USB_HOST_DP_PIN=${USB_HOST_DP_PIN})
 

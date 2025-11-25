@@ -49,6 +49,7 @@
 #include "usb_host.h"
 #include "kvstore_init.h"
 #include "keydef_store.h"
+#include "macros.h"
 
 #ifdef PICO_CYW43_SUPPORTED
 #include "pico/cyw43_arch.h"
@@ -602,6 +603,71 @@ void diag_log_keystroke(diag_buffer_t *buffer, uint32_t sequence, const hid_keyb
     }
 }
 
+// Format a keystroke into human-readable form
+static void format_keystroke(char *buf, size_t bufsize, uint8_t modifier, const uint8_t keycode[6]) {
+    buf[0] = '\0';
+
+    // Handle no keys pressed
+    bool has_keys = false;
+    for (int i = 0; i < 6; i++) {
+        if (keycode[i] != 0) {
+            has_keys = true;
+            break;
+        }
+    }
+
+    if (!has_keys && modifier == 0) {
+        snprintf(buf, bufsize, "(none)");
+        return;
+    }
+
+    // Build modifier prefix
+    char mod_str[20] = "";
+    if (modifier & 0x01) strcat(mod_str, "Ctrl+");       // Left Ctrl
+    if (modifier & 0x02) strcat(mod_str, "Shift+");      // Left Shift
+    if (modifier & 0x04) strcat(mod_str, "Alt+");        // Left Alt
+    if (modifier & 0x08) strcat(mod_str, "GUI+");        // Left GUI
+    if (modifier & 0x10) strcat(mod_str, "RCtrl+");      // Right Ctrl
+    if (modifier & 0x20) strcat(mod_str, "RShift+");     // Right Shift
+    if (modifier & 0x40) strcat(mod_str, "RAlt+");       // Right Alt
+    if (modifier & 0x80) strcat(mod_str, "RGUI+");       // Right GUI
+
+    strncat(buf, mod_str, bufsize - strlen(buf) - 1);
+
+    // Format each key
+    for (int i = 0; i < 6 && keycode[i] != 0; i++) {
+        if (i > 0) {
+            strncat(buf, "+", bufsize - strlen(buf) - 1);
+        }
+
+        // Try ASCII first (without shift, since we already showed Shift+ in modifier)
+        char ascii = keycode_to_ascii(keycode[i], 0);
+        if (ascii >= 32 && ascii < 127) {
+            char temp[2] = {ascii, '\0'};
+            strncat(buf, temp, bufsize - strlen(buf) - 1);
+            continue;
+        }
+
+        // Try mnemonic
+        const char *mnemonic = keycode_to_mnemonic(keycode[i]);
+        if (mnemonic) {
+            strncat(buf, mnemonic, bufsize - strlen(buf) - 1);
+            continue;
+        }
+
+        // Fall back to hex
+        char hex[8];
+        snprintf(hex, sizeof(hex), "0x%02x", keycode[i]);
+        strncat(buf, hex, bufsize - strlen(buf) - 1);
+    }
+
+    // If only modifiers, remove trailing '+'
+    size_t len = strlen(buf);
+    if (len > 0 && buf[len - 1] == '+') {
+        buf[len - 1] = '\0';
+    }
+}
+
 void diag_dump_buffers(void) {
     printf("\n");
     printf("================================================================================\n");
@@ -638,34 +704,21 @@ void diag_dump_buffers(void) {
 
     // Print entries side by side
     for (uint32_t i = 0; i < max_count; i++) {
-        char recv_line[41] = "";
-        char sent_line[41] = "";
+        char recv_line[50] = "";
+        char sent_line[50] = "";
 
         // Format received entry if available
         if (i < diag_received_buffer.count) {
             uint32_t pos = (recv_start + i) % DIAG_BUFFER_SIZE;
             diag_keystroke_t *entry = &diag_received_buffer.entries[pos];
 
-            // Build keycode string showing all non-zero keycodes
-            char keys[20] = "";
-            int key_count = 0;
-            for (int j = 0; j < 6; j++) {
-                if (entry->keycode[j] != 0) {
-                    if (key_count > 0) {
-                        snprintf(keys + strlen(keys), sizeof(keys) - strlen(keys), ",");
-                    }
-                    snprintf(keys + strlen(keys), sizeof(keys) - strlen(keys), "%02x", entry->keycode[j]);
-                    key_count++;
-                }
-            }
-            if (key_count == 0) {
-                snprintf(keys, sizeof(keys), "--");
-            }
+            // Format keystroke into human-readable form
+            char keys[24];
+            format_keystroke(keys, sizeof(keys), entry->modifier, entry->keycode);
 
-            snprintf(recv_line, sizeof(recv_line), "#%-5lu %9lu m:%02x [%s]",
+            snprintf(recv_line, sizeof(recv_line), "#%-5lu %9lu  %-18s",
                      (unsigned long)entry->sequence,
                      (unsigned long)entry->timestamp_us,
-                     entry->modifier,
                      keys);
         }
 
@@ -674,26 +727,13 @@ void diag_dump_buffers(void) {
             uint32_t pos = (sent_start + i) % DIAG_BUFFER_SIZE;
             diag_keystroke_t *entry = &diag_sent_buffer.entries[pos];
 
-            // Build keycode string showing all non-zero keycodes
-            char keys[20] = "";
-            int key_count = 0;
-            for (int j = 0; j < 6; j++) {
-                if (entry->keycode[j] != 0) {
-                    if (key_count > 0) {
-                        snprintf(keys + strlen(keys), sizeof(keys) - strlen(keys), ",");
-                    }
-                    snprintf(keys + strlen(keys), sizeof(keys) - strlen(keys), "%02x", entry->keycode[j]);
-                    key_count++;
-                }
-            }
-            if (key_count == 0) {
-                snprintf(keys, sizeof(keys), "--");
-            }
+            // Format keystroke into human-readable form
+            char keys[24];
+            format_keystroke(keys, sizeof(keys), entry->modifier, entry->keycode);
 
-            snprintf(sent_line, sizeof(sent_line), "#%-5lu %9lu m:%02x [%s]",
+            snprintf(sent_line, sizeof(sent_line), "#%-5lu %9lu  %-18s",
                      (unsigned long)entry->sequence,
                      (unsigned long)entry->timestamp_us,
-                     entry->modifier,
                      keys);
         }
 
