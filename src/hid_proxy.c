@@ -91,6 +91,10 @@ volatile uint32_t keystrokes_received_from_physical = 0;  // Total reports from 
 volatile uint32_t keystrokes_sent_to_host = 0;            // Total reports sent to host computer
 volatile uint32_t queue_drops_realtime = 0;               // Times we dropped oldest item in realtime queue
 
+// Diagnostic cyclic buffers for keystroke history
+diag_buffer_t diag_received_buffer = {0};
+diag_buffer_t diag_sent_buffer = {0};
+
 // LED control for visual status feedback (Num Lock)
 static uint8_t current_led_state = 0;       // Current LED state to send to keyboard
 static absolute_time_t next_led_toggle;     // When to toggle LED next
@@ -322,7 +326,9 @@ int main(void) {
             printf("Queue depths: keyboard_to_tud=%d, tud_to_host=%d\n",
                    queue_get_level(&keyboard_to_tud_queue),
                    queue_get_level(&tud_to_physical_host_queue));
-            printf("USB report in progress: %s\n", kb.send_to_host_in_progress ? "YES (stuck?)" : "no");
+            printf("USB HID ready: kbd=%s mouse=%s\n",
+                   tud_hid_n_ready(ITF_NUM_KEYBOARD) ? "yes" : "NO",
+                   tud_hid_n_ready(ITF_NUM_MOUSE) ? "yes" : "NO");
 #ifdef PICO_CYW43_SUPPORTED
             if (wifi_is_connected()) {
                 printf("WiFi: Connected\n");
@@ -396,10 +402,14 @@ int main(void) {
         }
 
         // Anything waiting to be sent to the (real) host?
-        // TODO - is there a ready function?
+        // Use tud_hid_n_ready() to check if USB interface can accept new report
         send_data_t to_send;
-        if (!kb.send_to_host_in_progress && queue_try_remove(&tud_to_physical_host_queue, &to_send)) {
-            send_report_to_host(to_send);
+        if (queue_try_peek(&tud_to_physical_host_queue, &to_send)) {
+            // Check if the specific HID interface (keyboard or mouse) is ready
+            if (tud_hid_n_ready(to_send.report_id)) {
+                queue_try_remove(&tud_to_physical_host_queue, &to_send);
+                send_report_to_host(to_send);
+            }
         }
 
         if (kb.status == locked) {
@@ -455,10 +465,11 @@ void send_report_to_host(send_data_t to_send) {
         LOG_DEBUG("Sent to host instance=%x report_id=%x (len=%d): ", to_send.instance, to_send.report_id, to_send.len);
         hex_dump(to_send.data, to_send.len);
 #endif
-        kb.send_to_host_in_progress = true;
         // Count keyboard reports sent to host
         if (to_send.report_id == ITF_NUM_KEYBOARD) {
             keystrokes_sent_to_host++;
+            // Log to diagnostic buffer
+            diag_log_keystroke(&diag_sent_buffer, keystrokes_sent_to_host, (const hid_keyboard_report_t *)to_send.data);
         }
     } else {
         LOG_ERROR("tud_hid_n_report FAILED: %x\n", to_send.report_id);
@@ -571,16 +582,157 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_t
     return 0;
 }
 
-// Invoked when sent REPORT successfully to host
-// Application can use this to send the next report
-// Note: For composite reports, report[0] is report ID
-void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report, uint16_t len) {
-    (void) instance;
-    (void) report;
-    (void) len;
+/*------------- Diagnostic Buffer Functions -------------*/
 
-    LOG_TRACE("tud_hid_report_complete_cb");
-    kb.send_to_host_in_progress = false;
+void diag_log_keystroke(diag_buffer_t *buffer, uint32_t sequence, const hid_keyboard_report_t *report) {
+    uint32_t pos = buffer->head;
+    diag_keystroke_t *entry = &buffer->entries[pos];
+
+    entry->sequence = sequence;
+    entry->timestamp_us = (uint32_t)to_us_since_boot(get_absolute_time());
+    entry->modifier = report->modifier;
+    memcpy(entry->keycode, report->keycode, 6);
+
+    // Advance head pointer (circular)
+    buffer->head = (pos + 1) % DIAG_BUFFER_SIZE;
+
+    // Update count (saturates at buffer size)
+    if (buffer->count < DIAG_BUFFER_SIZE) {
+        buffer->count++;
+    }
+}
+
+void diag_dump_buffers(void) {
+    printf("\n");
+    printf("================================================================================\n");
+    printf("DIAGNOSTIC KEYSTROKE HISTORY\n");
+    printf("================================================================================\n");
+    printf("Total received: %lu, Total sent: %lu, Drops: %lu\n",
+           (unsigned long)keystrokes_received_from_physical,
+           (unsigned long)keystrokes_sent_to_host,
+           (unsigned long)queue_drops_realtime);
+    printf("\n");
+
+    // Determine which buffer has more entries to know how many rows to print
+    uint32_t max_count = diag_received_buffer.count > diag_sent_buffer.count
+                         ? diag_received_buffer.count
+                         : diag_sent_buffer.count;
+
+    if (max_count == 0) {
+        printf("No keystroke data captured yet.\n");
+        printf("================================================================================\n\n");
+        return;
+    }
+
+    printf("Showing last %lu keystrokes (buffer holds %d max)\n\n", (unsigned long)max_count, DIAG_BUFFER_SIZE);
+
+    // Print header
+    printf("%-40s | %-40s\n", "RECEIVED FROM KEYBOARD", "SENT TO HOST");
+    printf("%-40s-+-%-40s\n",
+           "----------------------------------------",
+           "----------------------------------------");
+
+    // Calculate starting positions for both buffers
+    uint32_t recv_start = (diag_received_buffer.head + DIAG_BUFFER_SIZE - diag_received_buffer.count) % DIAG_BUFFER_SIZE;
+    uint32_t sent_start = (diag_sent_buffer.head + DIAG_BUFFER_SIZE - diag_sent_buffer.count) % DIAG_BUFFER_SIZE;
+
+    // Print entries side by side
+    for (uint32_t i = 0; i < max_count; i++) {
+        char recv_line[41] = "";
+        char sent_line[41] = "";
+
+        // Format received entry if available
+        if (i < diag_received_buffer.count) {
+            uint32_t pos = (recv_start + i) % DIAG_BUFFER_SIZE;
+            diag_keystroke_t *entry = &diag_received_buffer.entries[pos];
+
+            // Build keycode string showing all non-zero keycodes
+            char keys[20] = "";
+            int key_count = 0;
+            for (int j = 0; j < 6; j++) {
+                if (entry->keycode[j] != 0) {
+                    if (key_count > 0) {
+                        snprintf(keys + strlen(keys), sizeof(keys) - strlen(keys), ",");
+                    }
+                    snprintf(keys + strlen(keys), sizeof(keys) - strlen(keys), "%02x", entry->keycode[j]);
+                    key_count++;
+                }
+            }
+            if (key_count == 0) {
+                snprintf(keys, sizeof(keys), "--");
+            }
+
+            snprintf(recv_line, sizeof(recv_line), "#%-5lu %9lu m:%02x [%s]",
+                     (unsigned long)entry->sequence,
+                     (unsigned long)entry->timestamp_us,
+                     entry->modifier,
+                     keys);
+        }
+
+        // Format sent entry if available
+        if (i < diag_sent_buffer.count) {
+            uint32_t pos = (sent_start + i) % DIAG_BUFFER_SIZE;
+            diag_keystroke_t *entry = &diag_sent_buffer.entries[pos];
+
+            // Build keycode string showing all non-zero keycodes
+            char keys[20] = "";
+            int key_count = 0;
+            for (int j = 0; j < 6; j++) {
+                if (entry->keycode[j] != 0) {
+                    if (key_count > 0) {
+                        snprintf(keys + strlen(keys), sizeof(keys) - strlen(keys), ",");
+                    }
+                    snprintf(keys + strlen(keys), sizeof(keys) - strlen(keys), "%02x", entry->keycode[j]);
+                    key_count++;
+                }
+            }
+            if (key_count == 0) {
+                snprintf(keys, sizeof(keys), "--");
+            }
+
+            snprintf(sent_line, sizeof(sent_line), "#%-5lu %9lu m:%02x [%s]",
+                     (unsigned long)entry->sequence,
+                     (unsigned long)entry->timestamp_us,
+                     entry->modifier,
+                     keys);
+        }
+
+        printf("%-40s | %-40s\n", recv_line, sent_line);
+    }
+
+    printf("================================================================================\n\n");
+
+    // Analysis: Look for sequence number gaps
+    printf("ANALYSIS:\n");
+
+    // Check for missing sequence numbers in sent buffer
+    uint32_t missing_count = 0;
+    if (diag_sent_buffer.count > 1) {
+        for (uint32_t i = 1; i < diag_sent_buffer.count; i++) {
+            uint32_t prev_pos = (sent_start + i - 1) % DIAG_BUFFER_SIZE;
+            uint32_t curr_pos = (sent_start + i) % DIAG_BUFFER_SIZE;
+
+            uint32_t prev_seq = diag_sent_buffer.entries[prev_pos].sequence;
+            uint32_t curr_seq = diag_sent_buffer.entries[curr_pos].sequence;
+
+            if (curr_seq > prev_seq + 1) {
+                uint32_t gap = curr_seq - prev_seq - 1;
+                missing_count += gap;
+                printf("  Gap detected: %lu keystroke(s) missing between seq #%lu and #%lu\n",
+                       (unsigned long)gap,
+                       (unsigned long)prev_seq,
+                       (unsigned long)curr_seq);
+            }
+        }
+    }
+
+    if (missing_count == 0) {
+        printf("  No gaps detected in sequence numbers (within buffer window)\n");
+    } else {
+        printf("  Total missing: %lu keystroke(s)\n", (unsigned long)missing_count);
+    }
+
+    printf("================================================================================\n\n");
 }
 
 void lock() {

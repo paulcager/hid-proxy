@@ -260,6 +260,8 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
     uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
     if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD) {
         keystrokes_received_from_physical++;
+        // Log to diagnostic buffer
+        diag_log_keystroke(&diag_received_buffer, keystrokes_received_from_physical, &to_tud.data.kb);
     }
 
     queue_add_blocking(&keyboard_to_tud_queue, &to_tud);

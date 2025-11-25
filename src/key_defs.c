@@ -41,6 +41,13 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
         return;
     }
 
+    if (kb_report->modifier == 0x22 && key0 == HID_KEY_D) {
+                    // Dump diagnostic keystroke buffers
+                    unlock();
+                    diag_dump_buffers();
+                    return;
+    }
+
     switch (kb.status) {
 
         case blank:
@@ -492,7 +499,9 @@ void print_keydefs() {
     printf("Queue depths: keyboard_to_tud=%d, tud_to_host=%d\n",
            queue_get_level(&keyboard_to_tud_queue),
            queue_get_level(&tud_to_physical_host_queue));
-    printf("USB report in progress: %s\n", kb.send_to_host_in_progress ? "YES (stuck?)" : "no");
+    printf("USB HID ready: kbd=%s mouse=%s\n",
+           tud_hid_n_ready(ITF_NUM_KEYBOARD) ? "yes" : "NO",
+           tud_hid_n_ready(ITF_NUM_MOUSE) ? "yes" : "NO");
     printf("===========================\n\n");
 }
 
