@@ -4,6 +4,7 @@
 #include "pico/stdlib.h"
 #include "pico/util/queue.h"
 #include "hardware/flash.h"
+#include "pico/sync.h"
 
 #include "tusb.h"
 #include "logging.h"
@@ -163,6 +164,7 @@ typedef struct {
     diag_keystroke_t entries[DIAG_BUFFER_SIZE];
     volatile uint32_t head;      // Next write position
     volatile uint32_t count;     // Number of entries (up to DIAG_BUFFER_SIZE)
+    spin_lock_t *lock;           // Protects concurrent access from both cores
 } diag_buffer_t;
 
 extern diag_buffer_t diag_received_buffer;  // Keystrokes received from physical keyboard

@@ -252,6 +252,15 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
         return;
     }
 
+    // DIAGNOSTIC: Print raw report immediately for keyboards (before any processing)
+    uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
+    if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD && len >= 8) {
+        printf("USB_RX: [%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x]\n",
+               report[0], report[1], report[2], report[3],
+               report[4], report[5], report[6], report[7]);
+        stdio_flush();  // Force immediate output
+    }
+
     hid_report_t to_tud;
     to_tud.instance = instance;
     to_tud.dev_addr = dev_addr;
@@ -259,7 +268,6 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
     memcpy(&to_tud.data, report, len);
 
     // Count keyboard reports received from physical keyboard
-    uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
     if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD) {
         keystrokes_received_from_physical++;
         // Log to diagnostic buffer
