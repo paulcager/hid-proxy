@@ -115,7 +115,7 @@ LED updates automatically on status changes and runs animation task in main loop
 
 **NFC Authentication** (nfc_tag.c): *Optional feature, disabled by default.* Interfaces with PN532 NFC reader via I2C (GPIO 4/5) to read/write 16-byte encryption keys from Mifare Classic tags. Supports multiple known authentication keys for tag access. Enable with `--nfc` build flag.
 
-**USB Configuration** (tusb_config.h): Configures device stack with keyboard, mouse, and CDC interfaces. Host stack (via PIO-USB on GPIO2/3) configured for keyboard/mouse input.
+**USB Configuration** (tusb_config.h): Configures device stack with keyboard, mouse, and CDC interfaces. Host stack (via PIO-USB on GPIO2/3) configured for keyboard/mouse input. See docs/PIO_USB_INTERNALS.md for details on how PIO implements USB signaling.
 
 **WiFi Configuration** (wifi_config.c/h): Manages WiFi connection using CYW43 chip on Pico W. Stores WiFi credentials in kvstore (`wifi.ssid`, `wifi.password`, `wifi.country`) unencrypted. WiFi credentials are not considered sensitive in this application context. Provides non-blocking WiFi connection that runs in background without affecting keyboard functionality.
 
@@ -194,7 +194,8 @@ The UI is activated by pressing both shift keys simultaneously, then releasing a
 - `=`: Start defining/redefining a key (interactive mode)
 - `SPACE`: Print all key definitions to serial console (debug/diagnostic), and enable web access for 5 minutes (WiFi/HTTP configuration)
 - `F12`: Start WiFi configuration console via UART (Pico W only)
-- `PRINT`: Write encryption key to NFC tag
+- `PRINT`: Write encryption key to NFC tag (when built with `--nfc` flag)
+- `D`: Dump diagnostic keystroke history to serial console (when built with `--diagnostics` flag)
 
 ## Special Key Combinations (Both Shifts Held)
 
@@ -258,6 +259,9 @@ The text format for macros (used for HTTP/network configuration):
 - RGB LED status update: `ws2812_led_update_status()` in ws2812_led.c (maps device status to color)
 - RGB LED animation: `ws2812_led_task()` in ws2812_led.c (handles rainbow pulse for web access)
 - 5-second status message: main loop in hid_proxy.c (prints comprehensive status after boot)
+- Diagnostic initialization: `diagnostics_init()` in diagnostics.c (sets up spinlocks for cyclic buffers)
+- Diagnostic logging: `diag_log_keystroke()` in diagnostics.c (records keystroke to cyclic buffer)
+- Diagnostic dump: `diag_dump_buffers()` in diagnostics.c (prints side-by-side comparison, gap analysis)
 
 ## Configuration Constants
 
@@ -276,6 +280,8 @@ The text format for macros (used for HTTP/network configuration):
 - Password hash key: `auth.password_hash` (32-byte SHA256 hash, unencrypted) (kvstore_init.h)
 - Header bytes: `0x00` = unencrypted, `0x01` = encrypted (kvstore_init.h)
 - Encryption overhead: 29 bytes per encrypted value (1 + 12 + 16) (kvstore_init.c)
+- Diagnostic buffer size: 256 entries per buffer (diagnostics.h:DIAG_BUFFER_SIZE)
+- Diagnostic memory cost: 16KB RAM when enabled (2 × 256 × 32 bytes), ~12 bytes when disabled (diagnostics.c)
 
 ## Known Issues/TODOs
 

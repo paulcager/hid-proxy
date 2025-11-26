@@ -79,6 +79,9 @@ Communication between cores uses lock-free queues for HID reports and LED status
 # Build with NFC support
 ./build.sh --nfc
 
+# Build with diagnostic system (16KB RAM for keystroke history debugging)
+./build.sh --diagnostics
+
 # Build for regular Pico (no WiFi)
 ./build.sh --board pico
 
@@ -150,7 +153,8 @@ To access special functions:
 | `=`      | Start defining/redefining a key. Next keystroke is the trigger key, following keystrokes are the expansion. End with another double-shift.                           |
 | `SPACE`  | Print all current key definitions to serial console (debug output) and enable web access for 5 minutes. Useful for viewing configured macros via UART.               |
 | `F12`    | **Pico W only:** Start WiFi configuration console via serial UART. Configure WiFi SSID, password, and country code interactively. **New!**                           |
-| `PRINT`  | Write the current encryption key to an NFC tag (requires PN532 reader and Mifare Classic tag).                                                                       |
+| `PRINT`  | Write the current encryption key to an NFC tag (requires PN532 reader, Mifare Classic tag, and `--nfc` build flag).                                                  |
+| `D`      | **Diagnostics:** Dump last 256 keystrokes to serial console showing received vs. sent reports. Requires `--diagnostics` build flag. Useful for debugging corruption. |
 | `HOME`   | *While holding both shifts:* Reboot into bootloader mode for flashing new firmware.                                                                                  |
 
 ### First-Time Setup
