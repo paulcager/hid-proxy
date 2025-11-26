@@ -50,6 +50,7 @@
 #include "kvstore_init.h"
 #include "keydef_store.h"
 #include "macros.h"
+#include "led_control.h"
 
 #ifdef PICO_CYW43_SUPPORTED
 #include "pico/cyw43_arch.h"
@@ -106,11 +107,6 @@ uint32_t led_off_interval_ms = 0;           // How long LED stays off (ms)
 volatile bool usb_suspended = false;
 static uint32_t pre_suspend_clock_khz = 0;
 
-// Built-in LED pin (GPIO25 on Pico/Pico2, CYW43 on Pico W/Pico2 W)
-#ifndef PICO_CYW43_SUPPORTED
-#define BUILTIN_LED_PIN 25
-#endif
-
 /*------------- LED Status Feedback -------------*/
 
 void update_status_led(void) {
@@ -118,11 +114,7 @@ void update_status_led(void) {
     extern volatile bool usb_device_ever_mounted;
     if (!usb_device_ever_mounted) {
         // No keyboard connected yet - keep LED ON
-#ifdef PICO_CYW43_SUPPORTED
-        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
-#else
-        gpio_put(BUILTIN_LED_PIN, 1);
-#endif
+        led_set(true);
         return;
     }
 
@@ -140,13 +132,7 @@ void update_status_led(void) {
 
     // Update built-in LED to mirror NumLock state (bit 0)
     bool led_on = (current_led_state & 0x01) != 0;
-#ifdef PICO_CYW43_SUPPORTED
-    // Use CYW43 LED on Pico W/Pico2 W
-    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led_on);
-#else
-    // Use GPIO25 on Pico/Pico2
-    gpio_put(BUILTIN_LED_PIN, led_on);
-#endif
+    led_set(led_on);
 
     // Send to physical keyboard (non-blocking)
     queue_try_add(&leds_queue, &current_led_state);
@@ -253,22 +239,18 @@ int main(void) {
     LOG_INFO("Core 1 launched\n");
 
 #ifdef PICO_CYW43_SUPPORTED
-    // Initialize WiFi (if configured) - only on Pico W
+    // Initialize WiFi (if configured)
+    // This attempts to initialize CYW43, which will succeed on Pico W and fail on plain Pico
     wifi_config_init();
     wifi_init();
-    LOG_INFO("WiFi initialization complete\n");
-    // CYW43 LED is automatically initialized by wifi_init()
-    // Turn LED ON until keyboard connects
-    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
-    LOG_INFO("Built-in LED ON (will turn off when keyboard connects)\n");
-#else
-    LOG_INFO("WiFi not supported on this hardware\n");
-    // Initialize built-in LED (GPIO25) on non-WiFi boards
-    gpio_init(BUILTIN_LED_PIN);
-    gpio_set_dir(BUILTIN_LED_PIN, GPIO_OUT);
-    gpio_put(BUILTIN_LED_PIN, 1);  // Start with LED ON (will turn off when keyboard connects)
-    LOG_INFO("Built-in LED initialized on GPIO%d (ON until keyboard connects)\n", BUILTIN_LED_PIN);
+    LOG_INFO("WiFi initialization complete (CYW43 present: %s)\n",
+             wifi_is_initialized() ? "yes" : "no");
 #endif
+
+    // Initialize built-in LED (detects CYW43 vs GPIO25 at runtime)
+    led_init();
+    led_set(true);  // Start with LED ON (will turn off when keyboard connects)
+    LOG_INFO("Built-in LED initialized and ON (will turn off when keyboard connects)\n");
 
 #ifdef BOARD_WS_2350
     // Initialize WS2812 RGB LED for status indication

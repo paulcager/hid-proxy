@@ -74,6 +74,7 @@ add_executable(hid_proxy
         src/usb_descriptors.c
         src/kvstore_init.c
         src/keydef_store.c
+        src/led_control.c
         tiny-AES-c/aes.c
         tinycrypt/lib/source/sha256.c
         tinycrypt/lib/source/hmac.c

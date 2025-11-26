@@ -4,6 +4,7 @@
 
 #include "nfc_tag.h"
 #include "hid_proxy.h"
+#include "led_control.h"
 #include "tusb.h"
 #include "pio_usb.h"
 #include "pico/util/queue.h"
@@ -134,11 +135,7 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_re
 
     // Turn off built-in LED when keyboard is connected
     if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD) {
-#ifdef PICO_CYW43_SUPPORTED
-        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);  // Turn off CYW43 LED on Pico W
-#else
-        gpio_put(25, 0);  // Turn off GPIO25 LED on Pico/Pico2
-#endif
+        led_set(false);  // Turn off built-in LED (auto-detects CYW43 or GPIO25)
         LOG_INFO("Keyboard connected - built-in LED turned off\n");
     }
 
@@ -247,33 +244,62 @@ static void handle_generic_report(hid_report_t report) {
 void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *report, uint16_t len) {
     LOG_DEBUG("%d,%d: tuh_hid_report_received_cb: itf_protocol=%d on core %d\n", dev_addr, instance, tuh_hid_interface_protocol(dev_addr, instance), get_core_num());
 
+    // Bounds check (defense in depth)
     if (len > sizeof(union hid_reports)) {
         LOG_ERROR("Discarding report with size %d (max is %d)\n", len, sizeof(union hid_reports));
         return;
     }
 
-    // DIAGNOSTIC: Print raw report immediately for keyboards (before any processing)
-    uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
-    if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD && len >= 8) {
-        printf("USB_RX: [%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x]\n",
-               report[0], report[1], report[2], report[3],
-               report[4], report[5], report[6], report[7]);
-        stdio_flush();  // Force immediate output
-    }
-
+    // CRITICAL: Copy data from USB buffer IMMEDIATELY with interrupt protection
+    // This must be done FIRST to minimize window where buffer could be reused
     hid_report_t to_tud;
     to_tud.instance = instance;
     to_tud.dev_addr = dev_addr;
     to_tud.len = len;
-    memcpy(&to_tud.data, report, len);
 
-    // Count keyboard reports received from physical keyboard
+    // Redundant bounds check right before copy (paranoid defense)
+    if (len > sizeof(to_tud.data)) {
+        LOG_ERROR("CRITICAL: len %d exceeds to_tud.data size %d\n", len, sizeof(to_tud.data));
+        return;
+    }
+
+    // Disable interrupts during critical copy operation to prevent race conditions
+    uint32_t save = save_and_disable_interrupts();
+    memcpy(&to_tud.data, report, len);
+    // Memory barrier to ensure copy completes before we proceed
+    __dmb();
+    restore_interrupts(save);
+
+    // Data validation: Check for suspicious/corrupted data
+    uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
+    if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD && len >= 8) {
+        hid_keyboard_report_t *kb = &to_tud.data.kb;
+        // Validate modifier byte (only lower 8 bits are valid modifiers)
+        if (kb->modifier & 0x00) {  // All modifiers are in lower byte
+            // Check keycodes are in valid range (0x00-0xE7)
+            for (int i = 0; i < 6; i++) {
+                if (kb->keycode[i] > 0xE7 && kb->keycode[i] != 0) {
+                    LOG_ERROR("CORRUPT: Invalid keycode[%d]=0x%02x in report\n", i, kb->keycode[i]);
+                }
+            }
+        }
+
+        // DIAGNOSTIC: Print raw report immediately (from our COPY, not USB buffer)
+        printf("USB_RX: [%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x]\n",
+               kb->modifier, kb->reserved,
+               kb->keycode[0], kb->keycode[1], kb->keycode[2],
+               kb->keycode[3], kb->keycode[4], kb->keycode[5]);
+        stdio_flush();  // Force immediate output
+    }
+
+    // Count keyboard reports received from physical keyboard (using our copy)
     if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD) {
         keystrokes_received_from_physical++;
-        // Log to diagnostic buffer
+        // Log to diagnostic buffer (from our copy)
         diag_log_keystroke(&diag_received_buffer, keystrokes_received_from_physical, &to_tud.data.kb);
     }
 
+    // Queue operations (using our copy)
     queue_add_blocking(&keyboard_to_tud_queue, &to_tud);
 
     // continue to request to receive report
