@@ -250,6 +250,15 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
         return;
     }
 
+    // DIAGNOSTIC: Print raw report IMMEDIATELY from PIO-USB buffer (before any processing)
+    uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
+    if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD && len >= 8) {
+        printf("USB_RX: [%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x]\n",
+               report[0], report[1], report[2], report[3],
+               report[4], report[5], report[6], report[7]);
+        stdio_flush();  // Force immediate output
+    }
+
     // CRITICAL: Copy data from USB buffer IMMEDIATELY with interrupt protection
     // This must be done FIRST to minimize window where buffer could be reused
     hid_report_t to_tud;
@@ -271,7 +280,6 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
     restore_interrupts(save);
 
     // Data validation: Check for suspicious/corrupted data
-    uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
     if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD && len >= 8) {
         hid_keyboard_report_t *kb = &to_tud.data.kb;
         // Validate modifier byte (only lower 8 bits are valid modifiers)
@@ -283,13 +291,6 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
                 }
             }
         }
-
-        // DIAGNOSTIC: Print raw report immediately (from our COPY, not USB buffer)
-        printf("USB_RX: [%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x]\n",
-               kb->modifier, kb->reserved,
-               kb->keycode[0], kb->keycode[1], kb->keycode[2],
-               kb->keycode[3], kb->keycode[4], kb->keycode[5]);
-        stdio_flush();  // Force immediate output
     }
 
     // Count keyboard reports received from physical keyboard (using our copy)
