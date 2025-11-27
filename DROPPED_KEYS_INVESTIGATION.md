@@ -300,4 +300,142 @@ Since the corruption happens in PIO-USB before our firmware sees the data:
 
 ---
 
+## 2025-11-27: Code Cleanup and PIO-USB Upgrade
+
+### Investigation: Comparison with hid-passthrough
+
+Testing revealed that `../hid-passthrough` does NOT exhibit the dropped key problem, suggesting the issue is specific to hid-proxy's implementation.
+
+**Key Differences Found:**
+
+1. **PIO-USB Version**
+   - hid-passthrough: commit `675543b` (Aug 2025) - "Merge pull request #186 from hathach/reduce-handshake-delay"
+   - hid-proxy (before fix): commit `3c1eec3` (May 2025) - older version
+   - **Gap:** 2 commits with timing optimizations missing
+
+2. **Code in Interrupt Handler**
+   - hid-passthrough: Minimal - direct forwarding with `tud_hid_report()`
+   - hid-proxy: Complex - spinlocks, diagnostic logging, queue operations, interrupt disabling
+
+3. **Queue Strategy**
+   - hid-passthrough: No queue - direct forwarding
+   - hid-proxy: Used `queue_add_blocking()` which can stall interrupt handler
+
+### Root Cause Analysis (Revised)
+
+The diagnostic code added during investigation (spinlocks, interrupt disabling, blocking queue) were **attempted fixes**, not causes. The original problem predates this code.
+
+**Most likely causes:**
+1. **PIO-USB timing issues** - Older version lacks handshake delay optimizations
+2. **Interrupt handler stalls** - Complex code in interrupt context delays USB processing
+3. **System-wide timing** - WiFi, flash operations, or other background tasks affecting Core 1
+
+### Changes Made (2025-11-27)
+
+**Phase 1: Cleanup (Revert Hopeful Fixes)**
+
+1. **src/usb_host.c:304** - Reverted `queue_add_blocking()` → `queue_try_add()`
+   ```c
+   // Now uses non-blocking queue with drop-oldest strategy
+   if (!queue_try_add(&keyboard_to_tud_queue, &to_tud)) {
+       hid_report_t discard;
+       if (queue_try_remove(&keyboard_to_tud_queue, &discard)) {
+           queue_drops_realtime++;
+       }
+       queue_try_add(&keyboard_to_tud_queue, &to_tud);
+   }
+   ```
+
+2. **src/usb_host.c:275-276** - Removed `save_and_disable_interrupts()` around memcpy
+   - Unnecessary for aligned small memcpy
+   - Reduces interrupt latency
+
+3. **src/usb_host.c:278-300** - Disabled diagnostic code with `#if 0`
+   - Data validation code (spinlock contention)
+   - `diag_log_keystroke()` call (spinlock in interrupt handler)
+   - **Kept:** Lightweight `keystrokes_received_from_physical` counter
+   - **Kept:** Critical `USB_RX:` printf for diagnosis
+
+**Phase 2: PIO-USB Upgrade**
+
+4. **Pico-PIO-USB submodule** - Updated from `3c1eec3` → `675543b`
+   - Includes commits:
+     - `38ed543` - "optimize to reduce delay between received DATA and sending handshake"
+     - `675543b` - Merge of handshake delay optimization
+   - **Expected impact:** Better USB timing, fewer missed interrupts
+
+**Testing Required:**
+- ✅ Build: Successful (no compilation errors)
+- ⏳ Runtime: Test for dropped keys with new PIO-USB version
+- ⏳ Comparison: If still failing, rules out PIO-USB timing as sole cause
+
+### Alternative Test: Direct Forwarding (Like Passthrough)
+
+If PIO-USB upgrade doesn't resolve the issue, test direct forwarding on Core 1:
+
+**Current architecture:**
+```
+Core 1 (USB interrupt) → queue → Core 0 (main loop) → tud_hid_report()
+```
+
+**Passthrough architecture:**
+```
+Core 1 (USB interrupt) → tud_hid_report() directly
+```
+
+**Test plan:**
+- Modify `tuh_hid_report_received_cb()` to call `tud_hid_report()` directly (keyboard only, not macros)
+- Bypass queue entirely for basic passthrough
+- If this works, proves the issue is in queue/Core 0 processing, not PIO-USB
+- If this still fails, confirms PIO-USB or hardware-level issue
+
+### Hypotheses Ruled Out (Based on Testing)
+
+1. **Flash operations** ❌ - Only happen on keydef updates (vanishingly rare)
+2. **WiFi interference** ❌ - Problem observed on non-W Pico first
+3. **Queue depth** ❌ - 12 entries should be plenty for typing
+4. **Diagnostic code** ❌ - Problem predates spinlocks/interrupt disabling
+
+### Remaining Suspects (If PIO-USB Upgrade Fails)
+
+1. **DMA channel conflicts**
+   - PIO-USB uses DMA for USB transfers
+   - Check if other subsystems (kvstore? LED control?) use conflicting DMA channels
+   - PIO-USB configured with `tx_ch = 2` to avoid CYW43 conflict (usb_host.c:66)
+
+2. **PIO state machine conflicts**
+   - Compare PIO usage between hid-proxy and hid-passthrough
+   - Check if LED control, WS2812, or other features steal PIO resources
+
+3. **Core 1 starvation**
+   - Check for blocking operations in Core 1's main loop (usb_host.c:94-111)
+   - LED queue processing could delay `tuh_task()` calls
+   - USB suspend mode uses `__wfe()` - could this interfere?
+
+4. **System-wide interrupt latency**
+   - More complex firmware = more interrupts competing for CPU time
+   - Multiple timer interrupts, CYW43 interrupts (on Pico W), etc.
+   - Core 1 misses PIO-USB interrupts due to servicing other interrupts
+
+### Next Steps If PIO-USB Upgrade Fails
+
+1. **Git bisect** - Binary search through commit history
+   - Find exact commit where problem was introduced
+   - Reveals whether it's firmware changes or PIO-USB version
+   - Most efficient way to find root cause
+
+2. **Compare PIO/DMA usage** - Check resource conflicts
+   ```bash
+   # Find PIO/DMA initialization in both projects
+   grep -r "pio_sm_claim\|dma_channel_claim" src/
+   ```
+
+3. **Profile Core 1 timing** - Measure `tuh_task()` call frequency
+   - Add timestamp logging
+   - Check for gaps that could cause USB FIFO overflow
+
+4. **Test direct forwarding** - Bypass queue as temporary diagnostic
+
+---
+
 **Last Updated**: 2025-11-27

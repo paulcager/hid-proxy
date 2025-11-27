@@ -272,13 +272,10 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
         return;
     }
 
-    // Disable interrupts during critical copy operation to prevent race conditions
-    uint32_t save = save_and_disable_interrupts();
+    // Copy data from USB buffer IMMEDIATELY to minimize window where buffer could be reused
     memcpy(&to_tud.data, report, len);
-    // Memory barrier to ensure copy completes before we proceed
-    __dmb();
-    restore_interrupts(save);
 
+#if 0  // DIAGNOSTIC CODE - disabled to avoid spinlock contention in interrupt handler
     // Data validation: Check for suspicious/corrupted data
     if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD && len >= 8) {
         hid_keyboard_report_t *kb = &to_tud.data.kb;
@@ -292,16 +289,30 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
             }
         }
     }
+#endif
 
-    // Count keyboard reports received from physical keyboard (using our copy)
+    // Count keyboard reports received from physical keyboard (lightweight counter, no locks)
     if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD) {
         keystrokes_received_from_physical++;
+#if 0  // DIAGNOSTIC CODE - disabled to avoid spinlock contention in interrupt handler
         // Log to diagnostic buffer (from our copy)
         diag_log_keystroke(&diag_received_buffer, keystrokes_received_from_physical, &to_tud.data.kb);
+#endif
     }
 
-    // Queue operations (using our copy)
-    queue_add_blocking(&keyboard_to_tud_queue, &to_tud);
+    // Queue operations (using our copy) - non-blocking to avoid stalling interrupt handler
+    if (!queue_try_add(&keyboard_to_tud_queue, &to_tud)) {
+        // Queue full - drop oldest entry to make room (realtime mode)
+        hid_report_t discard;
+        if (queue_try_remove(&keyboard_to_tud_queue, &discard)) {
+            queue_drops_realtime++;
+            LOG_ERROR("Queue full, dropped oldest report (drops=%lu)\n", (unsigned long)queue_drops_realtime);
+        }
+        // Try again
+        if (!queue_try_add(&keyboard_to_tud_queue, &to_tud)) {
+            LOG_ERROR("CRITICAL: Still can't add to queue after drop!\n");
+        }
+    }
 
     // continue to request to receive report
     if (!tuh_hid_receive_report(dev_addr, instance)) {
