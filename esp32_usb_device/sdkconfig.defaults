@@ -1,0 +1,6 @@
+# TinyUSB Configuration
+CONFIG_TINYUSB_HID_COUNT=2
+
+
+
+
