@@ -2,6 +2,7 @@
  * USB Device HID Handler
  *
  * Receives HID reports from UART and forwards to USB host (PC)
+ * Integrated with state machine for command processing
  */
 
 #include <string.h>
@@ -13,6 +14,7 @@
 #include "tusb.h"
 #include "class/hid/hid_device.h"
 #include "uart_protocol.h"
+#include "state_machine.h"
 
 static const char *TAG = "usb_device_hid";
 
@@ -25,6 +27,25 @@ static QueueHandle_t mouse_report_queue;
 // HID interface indices (must match usb_descriptors.c)
 #define ITF_NUM_KEYBOARD 0
 #define ITF_NUM_MOUSE    1
+
+//--------------------------------------------------------------------+
+// HID Report Descriptors
+//--------------------------------------------------------------------+
+
+// Keyboard report descriptor (standard boot protocol)
+static uint8_t const desc_hid_keyboard_report[] = {
+    TUD_HID_REPORT_DESC_KEYBOARD()
+};
+
+// Mouse report descriptor (standard boot protocol)
+static uint8_t const desc_hid_mouse_report[] = {
+    TUD_HID_REPORT_DESC_MOUSE()
+};
+
+// Invoked when received GET HID REPORT DESCRIPTOR
+uint8_t const * tud_hid_descriptor_report_cb(uint8_t instance) {
+    return (instance == 0) ? desc_hid_keyboard_report : desc_hid_mouse_report;
+}
 
 //--------------------------------------------------------------------+
 // TinyUSB Callbacks
@@ -82,10 +103,9 @@ static void uart_rx_task(void *arg) {
             switch (packet.type) {
                 case PKT_KEYBOARD_REPORT: {
                     if (packet.length == 8) {
-                        // Queue keyboard report for sending
-                        if (xQueueSend(keyboard_report_queue, packet.payload, 0) != pdTRUE) {
-                            ESP_LOGW(TAG, "Keyboard queue full, dropping report");
-                        }
+                        // Process through state machine instead of direct queue
+                        hid_keyboard_report_t *report = (hid_keyboard_report_t *)packet.payload;
+                        handle_keyboard_report(report);
                     } else {
                         ESP_LOGW(TAG, "Invalid keyboard report length: %d", packet.length);
                     }
@@ -198,12 +218,7 @@ void usb_device_hid_init(void) {
 
     // Initialize TinyUSB device stack
     ESP_LOGI(TAG, "Initializing TinyUSB device stack");
-    const tinyusb_config_t tusb_cfg = {
-        .device_descriptor = NULL,  // Use descriptor from usb_descriptors.c
-        .string_descriptor = NULL,
-        .external_phy = false,
-        .configuration_descriptor = NULL,
-    };
+    const tinyusb_config_t tusb_cfg = {};  // Use default configuration
 
     ESP_ERROR_CHECK(tinyusb_driver_install(&tusb_cfg));
 

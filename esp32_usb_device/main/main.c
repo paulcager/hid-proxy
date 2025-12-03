@@ -20,6 +20,8 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "driver/gpio.h"
+#include "driver/uart.h"
 #include "uart_protocol.h"
 #include "usb_device_hid.h"
 
