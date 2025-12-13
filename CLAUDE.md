@@ -323,6 +323,60 @@ curl http://hidproxy-XXXX.local/status
 
 **Finding your board ID:** Check the serial console output when the device boots for the mDNS hostname, or use `avahi-browse -a` on Linux.
 
+## ESP32-S3 Port (Experimental)
+
+**Branch**: `esp32-port` (on hold)
+
+**Context**: When RP2350 boards showed PIO-USB compatibility issues (keyboards not detected), an ESP32-S3 port was developed as a fallback. The port is now on hold since the RP2040 keystroke corruption bug was identified and fixed (LED queue spam causing USB transaction interference).
+
+**Architecture**: Dual ESP32-S3 design
+```
+Keyboard ──USB OTG──> ESP32 #1 (Host)
+                      - Minimal code: USB host forwarding only
+                      - Native USB OTG (no PIO emulation)
+                           ↓ UART @ 921600 baud
+                           ↓ Raw HID packets
+                      ESP32 #2 (Device)
+                      - All application logic (state machine, macros, storage, WiFi)
+                      - Macro expansion happens here (avoids UART overflow)
+                           ↓ USB
+                      PC
+```
+
+**Key Design Decisions** (see `ARCHITECTURE_DECISION.md` in branch):
+1. **Logic on ESP32 #2**: Avoids UART buffer overflow on macro expansion (200-keystroke macro = 200 packets in 28ms → overflow). Matches original Pico Core 0/1 architecture.
+2. **Simple UART protocol**: 1:1 HID forwarding, no flow control needed, minimal overhead
+3. **Hardware limitation**: ESP32-S3 can only be USB host OR device, not both (unlike RP2040 with PIO-USB)
+
+**Implementation Status**:
+- ✅ USB host on ESP32 #1 (native OTG, forwards HID to UART)
+- ✅ USB device on ESP32 #2 (TinyUSB device stack, receives UART)
+- ✅ UART protocol with checksums and framing
+- ✅ Basic passthrough working (~435 lines of C)
+- 🚧 State machine partially ported
+- ❌ Storage/encryption not yet ported
+- ❌ WiFi/MQTT not yet ported
+
+**Advantages over RP2040**:
+- Native USB OTG (no PIO-USB compatibility issues)
+- More RAM (512KB vs 264KB)
+- Faster CPU (240MHz vs 125MHz)
+- Better WiFi (802.11n vs 802.11g)
+
+**Disadvantages**:
+- Requires 2× ESP32-S3 boards instead of 1× Pico
+- UART adds ~1-2ms latency
+- More complex wiring
+- Higher cost (~$10-15 vs ~$4-6)
+
+**Recommendation**: Use RP2040 Pico/Pico W for production. ESP32 port remains as documented fallback if future RP2040/RP2350 issues arise.
+
+**Documentation in branch**:
+- `ARCHITECTURE_DECISION.md` - Why logic runs on ESP32 #2
+- `ESP32_MIGRATION_PLAN.md` - 821-line porting guide
+- `DUAL_ESP32_POC_COMPLETE.md` - PoC implementation details
+- `esp32_usb_host/` and `esp32_usb_device/` - Working code
+
 ## Future Development
 
 See CONFIGURATION_OPTIONS.md for additional planned features:

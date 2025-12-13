@@ -398,6 +398,35 @@ See **BUGS.md** for a comprehensive list of 34+ bugs including:
 - ✅ Cleaned up deprecated code (kb.local_store removed)
 - See **KVSTORE_STATUS.md** for current status and **KVSTORE_MIGRATION.md** for migration details
 
+## ESP32-S3 Port (Experimental)
+
+**Status**: 🚧 On hold (RP2040 PIO-USB issues resolved, Pico is working)
+
+An experimental ESP32-S3 port exists in the `esp32-port` branch, developed as a contingency when RP2350 boards had PIO-USB compatibility issues. Now that the keystroke corruption bug was fixed in the RP2040 version (LED queue spam issue), the ESP32 port is on hold.
+
+**Architecture**: Dual ESP32-S3 boards
+- **ESP32 #1** (USB Host side): Minimal forwarding, receives from keyboard via native USB OTG, sends raw HID to UART
+- **ESP32 #2** (USB Device side): All application logic (state machine, macros, storage, WiFi), receives UART, acts as keyboard to PC
+- **UART Protocol**: 921600 baud, 1:1 HID forwarding with checksums
+
+**Why dual-device**: ESP32-S3 can only be USB host OR device at a time (hardware limitation), not both simultaneously like RP2040 with PIO-USB.
+
+**Advantages over RP2040**:
+- ✅ Native USB OTG (no PIO-USB compatibility issues)
+- ✅ More RAM (512KB vs 264KB)
+- ✅ Faster CPU (240MHz vs 125MHz)
+- ✅ Better WiFi (802.11n vs 802.11g on Pico W)
+
+**Disadvantages**:
+- ❌ Requires two boards instead of one
+- ❌ UART adds latency (~1-2ms)
+- ❌ More complex wiring
+- ❌ Higher cost
+
+**Current status**: Proof-of-concept passthrough working, state machine partially ported. See `esp32-port` branch for details and documentation (`ARCHITECTURE_DECISION.md`, `ESP32_MIGRATION_PLAN.md`).
+
+**Recommendation**: Use RP2040 Pico/Pico W for production. ESP32 port remains as fallback if future RP2040/RP2350 issues arise.
+
 ## Technical Documentation
 
 For detailed technical information, see:
