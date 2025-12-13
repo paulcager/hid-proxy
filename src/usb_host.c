@@ -4,6 +4,7 @@
 
 #include "nfc_tag.h"
 #include "hid_proxy.h"
+#include "led_control.h"
 #include "tusb.h"
 #include "pio_usb.h"
 #include "pico/util/queue.h"
@@ -56,8 +57,10 @@ void core1_main() {
     // Use GPIO12 for D+ (D- is automatically D+ + 1 = GPIO13)
     pio_cfg.pin_dp = 12;
 #else
-    // Standard Pico boards: Use GPIO2/3 for USB, leaving 0/1 available for UART if needed.
-    pio_cfg.pin_dp = 2;
+    // Standard Pico boards: USB host D+ pin (D- is automatically D+ + 1)
+    // Default: GPIO6/7 (configurable at build time with --usb-pins flag)
+    // Legacy: GPIO2/3 (use --usb-pins 2 for backwards compatibility)
+    pio_cfg.pin_dp = USB_HOST_DP_PIN;
 #endif
     // Use DMA channel 2 instead of 0 to avoid conflict with CYW43 WiFi
     pio_cfg.tx_ch = 2;
@@ -132,11 +135,7 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_re
 
     // Turn off built-in LED when keyboard is connected
     if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD) {
-#ifdef PICO_CYW43_SUPPORTED
-        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);  // Turn off CYW43 LED on Pico W
-#else
-        gpio_put(25, 0);  // Turn off GPIO25 LED on Pico/Pico2
-#endif
+        led_set(false);  // Turn off built-in LED (auto-detects CYW43 or GPIO25)
         LOG_INFO("Keyboard connected - built-in LED turned off\n");
     }
 
@@ -245,26 +244,55 @@ static void handle_generic_report(hid_report_t report) {
 void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *report, uint16_t len) {
     LOG_DEBUG("%d,%d: tuh_hid_report_received_cb: itf_protocol=%d on core %d\n", dev_addr, instance, tuh_hid_interface_protocol(dev_addr, instance), get_core_num());
 
+    // Bounds check (defense in depth)
     if (len > sizeof(union hid_reports)) {
         LOG_ERROR("Discarding report with size %d (max is %d)\n", len, sizeof(union hid_reports));
         return;
     }
 
+    // DIAGNOSTIC: Print raw report IMMEDIATELY from PIO-USB buffer (before any processing)
+    uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
+    if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD && len >= 8) {
+        printf("USB_RX: [%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x]\n",
+               report[0], report[1], report[2], report[3],
+               report[4], report[5], report[6], report[7]);
+        stdio_flush();  // Force immediate output
+    }
+
+    // CRITICAL: Copy data from USB buffer IMMEDIATELY with interrupt protection
+    // This must be done FIRST to minimize window where buffer could be reused
     hid_report_t to_tud;
     to_tud.instance = instance;
     to_tud.dev_addr = dev_addr;
     to_tud.len = len;
-    memcpy(&to_tud.data, report, len);
 
-    // Count keyboard reports received from physical keyboard
-    uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
-    if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD) {
-        keystrokes_received_from_physical++;
-        // Log to diagnostic buffer
-        diag_log_keystroke(&diag_received_buffer, keystrokes_received_from_physical, &to_tud.data.kb);
+    // Redundant bounds check right before copy (paranoid defense)
+    if (len > sizeof(to_tud.data)) {
+        LOG_ERROR("CRITICAL: len %d exceeds to_tud.data size %d\n", len, sizeof(to_tud.data));
+        return;
     }
 
-    queue_add_blocking(&keyboard_to_tud_queue, &to_tud);
+    // Copy data from USB buffer IMMEDIATELY to minimize window where buffer could be reused
+    memcpy(&to_tud.data, report, len);
+
+    // Count keyboard reports received from physical keyboard (lightweight counter, no locks)
+    if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD) {
+        keystrokes_received_from_physical++;
+    }
+
+    // Queue operations (using our copy) - non-blocking to avoid stalling interrupt handler
+    if (!queue_try_add(&keyboard_to_tud_queue, &to_tud)) {
+        // Queue full - drop oldest entry to make room (realtime mode)
+        hid_report_t discard;
+        if (queue_try_remove(&keyboard_to_tud_queue, &discard)) {
+            queue_drops_realtime++;
+            LOG_ERROR("Queue full, dropped oldest report (drops=%lu)\n", (unsigned long)queue_drops_realtime);
+        }
+        // Try again
+        if (!queue_try_add(&keyboard_to_tud_queue, &to_tud)) {
+            LOG_ERROR("CRITICAL: Still can't add to queue after drop!\n");
+        }
+    }
 
     // continue to request to receive report
     if (!tuh_hid_receive_report(dev_addr, instance)) {

@@ -4,6 +4,7 @@
 #include "pico/stdlib.h"
 #include "pico/util/queue.h"
 #include "hardware/flash.h"
+#include "pico/sync.h"
 
 #include "tusb.h"
 #include "logging.h"
@@ -144,35 +145,8 @@ extern queue_t keyboard_to_tud_queue;
 extern queue_t tud_to_physical_host_queue;
 extern queue_t leds_queue;
 
-// Diagnostic counters for keystroke tracking
-extern volatile uint32_t keystrokes_received_from_physical;  // Total reports from physical keyboard
-extern volatile uint32_t keystrokes_sent_to_host;            // Total reports sent to host computer
-extern volatile uint32_t queue_drops_realtime;               // Times we dropped oldest item in realtime queue
-
-// Diagnostic cyclic buffer for keystroke history
-#define DIAG_BUFFER_SIZE 256
-
-typedef struct {
-    uint32_t sequence;           // Monotonic sequence number
-    uint32_t timestamp_us;       // Microseconds timestamp (wraps after ~71 minutes)
-    uint8_t modifier;            // HID modifier byte
-    uint8_t keycode[6];          // HID keycodes
-} diag_keystroke_t;
-
-typedef struct {
-    diag_keystroke_t entries[DIAG_BUFFER_SIZE];
-    volatile uint32_t head;      // Next write position
-    volatile uint32_t count;     // Number of entries (up to DIAG_BUFFER_SIZE)
-} diag_buffer_t;
-
-extern diag_buffer_t diag_received_buffer;  // Keystrokes received from physical keyboard
-extern diag_buffer_t diag_sent_buffer;      // Keystrokes sent to host
-
-// Add keystroke to diagnostic buffer
-void diag_log_keystroke(diag_buffer_t *buffer, uint32_t sequence, const hid_keyboard_report_t *report);
-
-// Dump diagnostic buffers to console
-void diag_dump_buffers(void);
+// Diagnostic system (optional, enabled with ENABLE_DIAGNOSTICS)
+#include "diagnostics.h"
 
 // LED control for visual status feedback (asymmetric on/off times)
 extern uint32_t led_on_interval_ms;   // How long LED stays on (ms)

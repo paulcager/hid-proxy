@@ -15,6 +15,8 @@ USE_DOCKER=true
 BOARD="pico_w"  # Default to Pico W (RP2040)
 ENABLE_USB_STDIO=false  # USB CDC stdio for debugging
 ENABLE_NFC=false  # NFC tag authentication
+ENABLE_DIAGNOSTICS=false  # Diagnostic system (16KB RAM)
+USB_HOST_DP_PIN=6  # GPIO pin for USB host D+ (D- is D++1), default 6 for new boards
 
 show_help() {
     cat << EOF
@@ -31,6 +33,8 @@ OPTIONS:
     -b, --board BOARD   Target board: pico, pico_w, pico2, pico2_w, ws_2350 (default: pico_w)
     -s, --stdio         Enable USB CDC stdio for debugging (printf over USB)
     -n, --nfc           Enable NFC tag authentication support
+    -D, --diagnostics   Enable diagnostic system (16KB RAM, Double-shift+D to dump)
+    -u, --usb-pins PIN  USB host D+ GPIO pin (D- is automatically D++1, default: 6)
 
 EXAMPLES:
     ./build.sh                      # Build for Pico W (RP2040 with WiFi)
@@ -41,6 +45,7 @@ EXAMPLES:
     ./build.sh --clean              # Clean build
     ./build.sh --interactive        # Open shell for debugging
     ./build.sh --local --board pico # Use local toolchain for regular Pico
+    ./build.sh --usb-pins 2         # Build with USB host on GPIO2/3 (for old boards)
 
 BOARD OPTIONS:
     pico_w      Raspberry Pi Pico W (RP2040 with WiFi/HTTP) - DEFAULT [WORKING]
@@ -62,6 +67,19 @@ NFC OPTIONS:
     --nfc       Enable NFC tag authentication (PN532 via I2C)
                 Requires PN532 module connected to GPIO 4/5 (I2C)
                 Default: disabled (most users don't have NFC hardware)
+
+DIAGNOSTIC OPTIONS:
+    --diagnostics   Enable diagnostic system (Double-shift+D to dump keystroke history)
+                    Allocates 16KB RAM for cyclic buffers tracking last 256 keystrokes
+                    Useful for debugging keystroke drops/corruption issues
+                    Default: disabled (saves RAM for production builds)
+
+USB HOST PIN OPTIONS:
+    --usb-pins PIN  Set GPIO pin for USB host D+ (D- is automatically D++1)
+                    Default: 6 (GPIO6/7) for new boards
+                    Use --usb-pins 2 for boards with sockets soldered to GPIO2/3
+                    Recommended: GPIO6/7 (keeps both UARTs on default pins)
+                    Also valid: GPIO8/9 (conflicts with UART1 default)
 
 OUTPUT:
     build/hid_proxy.uf2         # Firmware file ready to flash
@@ -108,6 +126,18 @@ while [[ $# -gt 0 ]]; do
         -n|--nfc)
             ENABLE_NFC=true
             shift
+            ;;
+        -D|--diagnostics)
+            ENABLE_DIAGNOSTICS=true
+            shift
+            ;;
+        -u|--usb-pins)
+            USB_HOST_DP_PIN="$2"
+            if ! [[ "$USB_HOST_DP_PIN" =~ ^[0-9]+$ ]] || [ "$USB_HOST_DP_PIN" -lt 0 ] || [ "$USB_HOST_DP_PIN" -gt 28 ]; then
+                echo -e "${RED}Error: Invalid USB host pin '$USB_HOST_DP_PIN'. Must be 0-28${NC}"
+                exit 1
+            fi
+            shift 2
             ;;
         *)
             echo -e "${RED}Error: Unknown option $1${NC}"
@@ -217,6 +247,14 @@ if [[ "$USE_DOCKER" == true ]]; then
         CMAKE_FLAGS="$CMAKE_FLAGS -DENABLE_NFC=ON"
         echo -e "${YELLOW}NFC tag authentication enabled${NC}"
     fi
+    if [[ "$ENABLE_DIAGNOSTICS" == true ]]; then
+        CMAKE_FLAGS="$CMAKE_FLAGS -DENABLE_DIAGNOSTICS=ON"
+        echo -e "${YELLOW}Diagnostic system enabled (16KB RAM allocated)${NC}"
+    fi
+    CMAKE_FLAGS="$CMAKE_FLAGS -DUSB_HOST_DP_PIN=$USB_HOST_DP_PIN"
+    if [[ "$USB_HOST_DP_PIN" != "6" ]]; then
+        echo -e "${YELLOW}USB host on GPIO$USB_HOST_DP_PIN/$((USB_HOST_DP_PIN+1)) (non-default)${NC}"
+    fi
 
     # Run the build with board selection
     docker run --rm -v "$(pwd):/home/builder/project" pico-bld \
@@ -258,6 +296,14 @@ else
     if [[ "$ENABLE_NFC" == true ]]; then
         CMAKE_FLAGS="$CMAKE_FLAGS -DENABLE_NFC=ON"
         echo -e "${YELLOW}NFC tag authentication enabled${NC}"
+    fi
+    if [[ "$ENABLE_DIAGNOSTICS" == true ]]; then
+        CMAKE_FLAGS="$CMAKE_FLAGS -DENABLE_DIAGNOSTICS=ON"
+        echo -e "${YELLOW}Diagnostic system enabled (16KB RAM allocated)${NC}"
+    fi
+    CMAKE_FLAGS="$CMAKE_FLAGS -DUSB_HOST_DP_PIN=$USB_HOST_DP_PIN"
+    if [[ "$USB_HOST_DP_PIN" != "6" ]]; then
+        echo -e "${YELLOW}USB host on GPIO$USB_HOST_DP_PIN/$((USB_HOST_DP_PIN+1)) (non-default)${NC}"
     fi
 
     mkdir -p build
