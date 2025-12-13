@@ -275,29 +275,9 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
     // Copy data from USB buffer IMMEDIATELY to minimize window where buffer could be reused
     memcpy(&to_tud.data, report, len);
 
-#if 0  // DIAGNOSTIC CODE - disabled to avoid spinlock contention in interrupt handler
-    // Data validation: Check for suspicious/corrupted data
-    if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD && len >= 8) {
-        hid_keyboard_report_t *kb = &to_tud.data.kb;
-        // Validate modifier byte (only lower 8 bits are valid modifiers)
-        if (kb->modifier & 0x00) {  // All modifiers are in lower byte
-            // Check keycodes are in valid range (0x00-0xE7)
-            for (int i = 0; i < 6; i++) {
-                if (kb->keycode[i] > 0xE7 && kb->keycode[i] != 0) {
-                    LOG_ERROR("CORRUPT: Invalid keycode[%d]=0x%02x in report\n", i, kb->keycode[i]);
-                }
-            }
-        }
-    }
-#endif
-
     // Count keyboard reports received from physical keyboard (lightweight counter, no locks)
     if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD) {
         keystrokes_received_from_physical++;
-#if 0  // DIAGNOSTIC CODE - disabled to avoid spinlock contention in interrupt handler
-        // Log to diagnostic buffer (from our copy)
-        diag_log_keystroke(&diag_received_buffer, keystrokes_received_from_physical, &to_tud.data.kb);
-#endif
     }
 
     // Queue operations (using our copy) - non-blocking to avoid stalling interrupt handler

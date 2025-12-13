@@ -15,6 +15,7 @@ USE_DOCKER=true
 BOARD="pico_w"  # Default to Pico W (RP2040)
 ENABLE_USB_STDIO=false  # USB CDC stdio for debugging
 ENABLE_NFC=false  # NFC tag authentication
+ENABLE_DIAGNOSTICS=false  # Diagnostic system (16KB RAM)
 USB_HOST_DP_PIN=6  # GPIO pin for USB host D+ (D- is D++1), default 6 for new boards
 
 show_help() {
@@ -32,6 +33,7 @@ OPTIONS:
     -b, --board BOARD   Target board: pico, pico_w, pico2, pico2_w, ws_2350 (default: pico_w)
     -s, --stdio         Enable USB CDC stdio for debugging (printf over USB)
     -n, --nfc           Enable NFC tag authentication support
+    -D, --diagnostics   Enable diagnostic system (16KB RAM, Double-shift+D to dump)
     -u, --usb-pins PIN  USB host D+ GPIO pin (D- is automatically D++1, default: 6)
 
 EXAMPLES:
@@ -65,6 +67,12 @@ NFC OPTIONS:
     --nfc       Enable NFC tag authentication (PN532 via I2C)
                 Requires PN532 module connected to GPIO 4/5 (I2C)
                 Default: disabled (most users don't have NFC hardware)
+
+DIAGNOSTIC OPTIONS:
+    --diagnostics   Enable diagnostic system (Double-shift+D to dump keystroke history)
+                    Allocates 16KB RAM for cyclic buffers tracking last 256 keystrokes
+                    Useful for debugging keystroke drops/corruption issues
+                    Default: disabled (saves RAM for production builds)
 
 USB HOST PIN OPTIONS:
     --usb-pins PIN  Set GPIO pin for USB host D+ (D- is automatically D++1)
@@ -117,6 +125,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -n|--nfc)
             ENABLE_NFC=true
+            shift
+            ;;
+        -D|--diagnostics)
+            ENABLE_DIAGNOSTICS=true
             shift
             ;;
         -u|--usb-pins)
@@ -235,6 +247,10 @@ if [[ "$USE_DOCKER" == true ]]; then
         CMAKE_FLAGS="$CMAKE_FLAGS -DENABLE_NFC=ON"
         echo -e "${YELLOW}NFC tag authentication enabled${NC}"
     fi
+    if [[ "$ENABLE_DIAGNOSTICS" == true ]]; then
+        CMAKE_FLAGS="$CMAKE_FLAGS -DENABLE_DIAGNOSTICS=ON"
+        echo -e "${YELLOW}Diagnostic system enabled (16KB RAM allocated)${NC}"
+    fi
     CMAKE_FLAGS="$CMAKE_FLAGS -DUSB_HOST_DP_PIN=$USB_HOST_DP_PIN"
     if [[ "$USB_HOST_DP_PIN" != "6" ]]; then
         echo -e "${YELLOW}USB host on GPIO$USB_HOST_DP_PIN/$((USB_HOST_DP_PIN+1)) (non-default)${NC}"
@@ -280,6 +296,10 @@ else
     if [[ "$ENABLE_NFC" == true ]]; then
         CMAKE_FLAGS="$CMAKE_FLAGS -DENABLE_NFC=ON"
         echo -e "${YELLOW}NFC tag authentication enabled${NC}"
+    fi
+    if [[ "$ENABLE_DIAGNOSTICS" == true ]]; then
+        CMAKE_FLAGS="$CMAKE_FLAGS -DENABLE_DIAGNOSTICS=ON"
+        echo -e "${YELLOW}Diagnostic system enabled (16KB RAM allocated)${NC}"
     fi
     CMAKE_FLAGS="$CMAKE_FLAGS -DUSB_HOST_DP_PIN=$USB_HOST_DP_PIN"
     if [[ "$USB_HOST_DP_PIN" != "6" ]]; then

@@ -44,6 +44,10 @@ option(ENABLE_USB_STDIO "Enable USB CDC stdio for debugging" OFF)
 # Disabled by default as NFC hardware is not commonly used
 option(ENABLE_NFC "Enable NFC tag authentication support" OFF)
 
+# Option to enable diagnostic system (cyclic buffers, Double-shift+D)
+# Disabled by default to save 16KB RAM
+option(ENABLE_DIAGNOSTICS "Enable diagnostic keystroke buffers and dump command" OFF)
+
 # Option to enable Waveshare RP2350-USB-A board (changes PIO-USB pins)
 option(BOARD_WS_2350 "Build for Waveshare RP2350-USB-A board" OFF)
 
@@ -75,6 +79,7 @@ add_executable(hid_proxy
         src/kvstore_init.c
         src/keydef_store.c
         src/led_control.c
+        src/diagnostics.c
         tiny-AES-c/aes.c
         tinycrypt/lib/source/sha256.c
         tinycrypt/lib/source/hmac.c
@@ -359,6 +364,12 @@ endif()
 if(ENABLE_NFC)
     target_compile_definitions(hid_proxy PRIVATE ENABLE_NFC=1)
     message(STATUS "NFC support enabled")
+endif()
+
+# Pass ENABLE_DIAGNOSTICS to source code as a preprocessor macro
+if(ENABLE_DIAGNOSTICS)
+    target_compile_definitions(hid_proxy PRIVATE ENABLE_DIAGNOSTICS=1)
+    message(STATUS "Diagnostic system enabled (16KB RAM allocated)")
 endif()
 
 # Pass BOARD_WS_2350 to source code as a preprocessor macro
