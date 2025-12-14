@@ -8,6 +8,7 @@
 #include "keydef_store.h"
 #include "kvstore_init.h"
 #include "kvstore.h"
+#include "led_control.h"
 #ifdef ENABLE_NFC
 #include "nfc_tag.h"
 #endif
@@ -71,8 +72,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 case HID_KEY_INSERT:
                     // Set first password
                     kb.status = entering_new_password;
-                    led_on_interval_ms = 50;   // Fast flash during password entry
-                    led_off_interval_ms = 50;
+                    led_set_intervals(50, 50);   // Fast flash during password entry
                     enc_clear_password();
                     printf("Enter new password\n");
                     return;
@@ -116,8 +116,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
 
                 case HID_KEY_ENTER:
                     kb.status = entering_password;
-                    led_on_interval_ms = 50;   // Fast flash during password entry
-                    led_off_interval_ms = 50;
+                    led_set_intervals(50, 50);   // Fast flash during password entry
                     enc_clear_password();
                     printf("Enter password\n");
                     return;
@@ -125,8 +124,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 case HID_KEY_INSERT:
                     // Change password while locked (will re-encrypt)
                     kb.status = entering_new_password;
-                    led_on_interval_ms = 50;   // Fast flash during password entry
-                    led_off_interval_ms = 50;
+                    led_set_intervals(50, 50);   // Fast flash during password entry
                     enc_clear_password();
                     printf("Enter new password\n");
                     return;
@@ -165,14 +163,11 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     // Wrong password
                     printf("Incorrect password\n");
                     kb.status = locked;
-                    led_on_interval_ms = 0;   // LED off when locked
-                    led_off_interval_ms = 0;
+                    led_set_intervals(0, 0);   // LED off when locked
                     enc_clear_key();
                 } else if (kb.status == entering_password) {
                     // Unlocking - no need to re-save anything
                     unlock();
-                    led_on_interval_ms = 100;    // Slow pulse when unlocked
-                    led_off_interval_ms = 2400;
                     printf("Unlocked\n");
                 } else {
                     // Changing password while unlocked
@@ -180,13 +175,10 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     if (kvstore_change_password(key)) {
                         printf("Password changed successfully - all data re-encrypted\n");
                         unlock();
-                        led_on_interval_ms = 100;    // Slow pulse when unlocked
-                        led_off_interval_ms = 2400;
                     } else {
                         printf("Password change failed\n");
                         kb.status = locked;
-                        led_on_interval_ms = 0;   // LED off when locked
-                        led_off_interval_ms = 0;
+                        led_set_intervals(0, 0);   // LED off when locked
                         enc_clear_key();
                     }
                 }
@@ -197,8 +189,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
         case normal:
             if (kb_report->modifier == 0x22 && key0 == 0) {
                 kb.status = seen_magic;
-                led_on_interval_ms = 50;   // Fast flash during command mode
-                led_off_interval_ms = 50;
+                led_set_intervals(50, 50);   // Fast flash during command mode
             } else {
                 LOG_TRACE("Adding to host Q: instance=%d, report_id=%d, len=%d\n", 0, REPORT_ID_KEYBOARD, sizeof(hid_keyboard_report_t));
                 add_to_host_queue_realtime(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
@@ -236,8 +227,6 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
 
                 case HID_KEY_ESCAPE:
                     unlock();
-                    led_on_interval_ms = 100;    // Back to slow pulse
-                    led_off_interval_ms = 2400;
                     return;
 
                 case HID_KEY_EQUAL:
@@ -278,8 +267,6 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     printf("\nStarting WiFi configuration...\n");
                     wifi_console_setup();
                     unlock();
-                    led_on_interval_ms = 100;    // Back to slow pulse
-                    led_off_interval_ms = 2400;
                     return;
 #else
                     // WiFi not supported on this hardware
@@ -290,8 +277,6 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
 
                 default:
                     unlock();
-                    led_on_interval_ms = 100;    // Back to slow pulse
-                    led_off_interval_ms = 2400;
                     evaluate_keydef(kb_report, key0);
                     return;
             }
@@ -322,8 +307,6 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 }
 
                 unlock();
-                led_on_interval_ms = 100;    // Back to slow pulse after defining
-                led_off_interval_ms = 2400;
                 return;
             }
 
@@ -361,8 +344,7 @@ void start_define(uint8_t key0) {
     kb.key_being_defined->count = 0;  // No reports recorded yet
 
     kb.status = defining;
-    led_on_interval_ms = 50;   // Fast flash during definition
-    led_off_interval_ms = 50;
+    led_set_intervals(50, 50);   // Fast flash during definition
     LOG_INFO("Defining keycode %d\n", key0);
     LOG_DEBUG("New def for %x is at %p\n", key0, kb.key_being_defined);
 }

@@ -1,28 +1,45 @@
 /*
- * The MIT License (MIT)
  *
+ * hid_proxy.c
+ * 
  * Copyright (c) 2019 Ha Thach (tinyusb.org)
  *                    sekigon-gonnoc
  * Copyright (c) 2023 paul.cager@gmail.com
  *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
  *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
+ * Top-level application logic for the HID Proxy device.
  *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
+ * This firmware runs on the RP2040 (Raspberry Pi Pico) and acts as a USB
+ * Human Interface Device (HID) proxy:
  *
+ *   - On the USB host side, it connects to one or more physical HID devices
+ *     (typically keyboards).
+ *   - On the USB device side, it presents itself to a host computer as a
+ *     standard USB HID keyboard.
+ *   - HID reports received from the physical device are queued, optionally
+ *     filtered or gated, and then forwarded to the upstream host.
+ *
+ * Architecture overview:
+ *
+ *   - Core 0 runs the TinyUSB *device* stack and presents the HID interface
+ *     to the upstream host computer.
+ *   - Core 1 runs the TinyUSB *host* stack and handles attached physical
+ *     HID devices.
+ *   - The two cores communicate via queues, which decouple USB timing from
+ *     key event production and provide backpressure handling.
+ *
+ * This file coordinates:
+ *   - System initialization and main event loop
+ *   - USB suspend/resume handling
+ *   - HID SET_REPORT / GET_REPORT callbacks
+ *   - Queueing and forwarding of HID reports between host and device sides
+ *   - High-level lock/unlock and gating logic (e.g. NFC, encryption, timeouts)
+ *
+ * Lower-level functionality such as LED/status indication, NFC handling,
+ * cryptography, and networking is implemented in separate modules.
+ *
+ * The intent of this file is to describe the overall behaviour and data flow
+ * of the HID proxy rather than hardware-specific details.
  */
 
 #include <stdlib.h>
@@ -68,10 +85,9 @@
 #endif
 
 // Reminders:
-// Latest is ~/pico/hid-proxy2/build
 // make && openocd -f interface/cmsis-dap.cfg -f target/rp2040.cfg -c "adapter speed 5000" -c "program $(ls *.elf) verify reset exit"
 // minicom -b 115200 -o -D /dev/ttyACM0
-// UART0 on standard ports and PIO-USB on GPIO2/3 (see CMakeLists.txt to change).
+// UART0 on standard ports and PIO-USB on GPIO6/7 (see CMakeLists.txt to change).
 
 
 kb_t kb;
@@ -88,67 +104,14 @@ queue_t tud_to_physical_host_queue;
 // A queue of events from the physical host, to be sent to the physical keyboard.
 queue_t leds_queue;
 
-// LED control for visual status feedback (Num Lock)
-static uint8_t current_led_state = 0;       // Current LED state to send to keyboard
-static absolute_time_t next_led_toggle;     // When to toggle LED next
-uint32_t led_on_interval_ms = 0;            // How long LED stays on (ms)
-uint32_t led_off_interval_ms = 0;           // How long LED stays off (ms)
-static bool boot_complete = false;          // Set to true after boot message is printed
+// LED control moved to led_control.c
 
 // USB suspend/resume state
 volatile bool usb_suspended = false;
 static uint32_t pre_suspend_clock_khz = 0;
 
 /*------------- LED Status Feedback -------------*/
-
-void update_status_led(void) {
-    // Track what we last sent to avoid queue spam (CRITICAL for USB stability!)
-    static uint8_t last_sent_state = 0xFF;  // Invalid initial state forces first send
-
-    // Keep LEDs ON until boot message is displayed (power-on indicator)
-    if (!boot_complete) {
-        led_set(true);  // On-board LED ON
-        current_led_state = 0x01;  // NumLock LED ON
-        if (current_led_state != last_sent_state) {
-            queue_try_add(&leds_queue, &current_led_state);
-            last_sent_state = current_led_state;
-        }
-        return;
-    }
-
-    // Keep LED ON until a keyboard is connected
-    extern volatile bool usb_device_ever_mounted;
-    if (!usb_device_ever_mounted) {
-        // No keyboard connected yet - keep LED ON
-        led_set(true);
-        return;
-    }
-
-    if (led_on_interval_ms == 0 && led_off_interval_ms == 0) {
-        // LED off (locked/blank state)
-        current_led_state = 0;
-    } else if (time_reached(next_led_toggle)) {
-        // Toggle Num Lock LED (bit 0)
-        current_led_state ^= 0x01;
-
-        // Use different interval based on new state
-        uint32_t next_interval = (current_led_state & 0x01) ? led_on_interval_ms : led_off_interval_ms;
-        next_led_toggle = make_timeout_time_ms(next_interval);
-    }
-
-    // Update built-in LED to mirror NumLock state (bit 0)
-    bool led_on = (current_led_state & 0x01) != 0;
-    led_set(led_on);
-
-    // CRITICAL FIX: Only send to physical keyboard when state actually changes!
-    // Previously this ran unconditionally (~1000 times/sec), causing USB transaction
-    // interference on Core 1 which led to keystroke corruption. Now only sends
-    // when LED state changes (~0.4 times/sec), reducing queue traffic by 99.96%.
-    if (current_led_state != last_sent_state) {
-        queue_try_add(&leds_queue, &current_led_state);
-        last_sent_state = current_led_state;
-    }
-}
+// LED logic moved to led_control.c
 
 /*------------- USB Suspend/Resume Callbacks -------------*/
 
@@ -194,10 +157,18 @@ void tud_resume_cb(void) {
     LOG_INFO("Resumed to normal operation (%lu MHz)\n", clock_get_hz(clk_sys) / 1000000);
 }
 
-/*------------- MAIN -------------*/
+/*------------- INITIALIZATION PHASES -------------*/
 
-// core0: handle device events
-int main(void) {
+/**
+ * @brief Initialize core system components
+ *
+ * Sets up system clock, stdio, TinyUSB device stack, flash subsystem,
+ * and kvstore (persistent storage).
+ *
+ * IMPORTANT: This must be called before launch_core1() to avoid flash
+ * contention between cores.
+ */
+static void system_init(void) {
     // default 125MHz is not appropriate for PIO. Sysclock should be multiple of 12MHz.
     set_sys_clock_khz(120000, true);
 
@@ -230,24 +201,45 @@ int main(void) {
     }
     LOG_INFO("kvstore_init() complete\n");
 
+    // Initialize inter-queue communication
     queue_init(&keyboard_to_tud_queue, sizeof(hid_report_t), 12);
     queue_init(&tud_to_physical_host_queue, sizeof(send_data_t), 256);
     queue_init(&leds_queue, 1, 4);
 
+    // Pass leds_queue to LED control module
+    led_set_queue(&leds_queue);
+
     // Initialize diagnostic system (if enabled via ENABLE_DIAGNOSTICS)
     diagnostics_init();
 
+    // Set initial state
     LOG_INFO("Setting initial state to locked\n");
     kb.status = locked;
+}
 
+/**
+ * @brief Launch Core 1 (USB host stack)
+ *
+ * IMPORTANT: Must be called AFTER system_init() to avoid flash contention.
+ * Core 1 runs the TinyUSB host stack and handles physical keyboard input.
+ */
+static void launch_core1(void) {
     LOG_INFO("\n\nCore 0 (tud) running\n");
-
     LOG_INFO("Resetting and launching Core 1\n");
     multicore_reset_core1();
     // Launch Core 1 AFTER kvstore is initialized to avoid flash contention
     multicore_launch_core1(core1_main);
     LOG_INFO("Core 1 launched\n");
+}
 
+/**
+ * @brief Initialize network subsystems (WiFi, HTTP, MQTT)
+ *
+ * Only active on WiFi-enabled builds (PICO_CYW43_SUPPORTED).
+ * IMPORTANT: Must be called BEFORE peripheral_init() because LED
+ * initialization checks wifi_is_initialized().
+ */
+static void network_init(void) {
 #ifdef PICO_CYW43_SUPPORTED
     // Initialize WiFi (if configured)
     // This attempts to initialize CYW43, which will succeed on Pico W and fail on plain Pico
@@ -256,7 +248,15 @@ int main(void) {
     LOG_INFO("WiFi initialization complete (CYW43 present: %s)\n",
              wifi_is_initialized() ? "yes" : "no");
 #endif
+}
 
+/**
+ * @brief Initialize peripheral hardware (LEDs, NFC)
+ *
+ * IMPORTANT: Must be called AFTER network_init() because LED
+ * initialization checks wifi_is_initialized() to detect Pico W vs Pico.
+ */
+static void peripheral_init(void) {
     // Initialize built-in LED (detects CYW43 vs GPIO25 at runtime)
     led_init();
     led_set(true);  // Start with LED ON (will turn off when keyboard connects)
@@ -272,18 +272,30 @@ int main(void) {
         LOG_ERROR("Failed to initialize WS2812 RGB LED\n");
     }
 #endif
+}
 
-    LOG_INFO("Entering main loop\n");
+/**
+ * @brief Main event loop
+ *
+ * Handles:
+ * - USB device tasks (keyboard/mouse HID)
+ * - Status message printing (after 5 seconds)
+ * - LED updates
+ * - Network tasks (WiFi, HTTP, MQTT)
+ * - NFC authentication
+ * - Idle timeout locking
+ * - Queue processing between cores
+ */
+static void main_loop(void) {
+    LOG_INFO("Starting main event loop\n");
     absolute_time_t last_interaction = get_absolute_time();
     absolute_time_t start_time = get_absolute_time();
     status_t previous_status = locked;
+    bool status_message_printed = false;
 #ifdef PICO_CYW43_SUPPORTED
     bool http_server_started = false;
     bool mqtt_client_started = false;
 #endif
-
-    LOG_INFO("Starting main event loop (first iteration)\n");
-    bool status_message_printed = false;
 
     while (true) {
         // Print comprehensive status message after 5 seconds (when USB CDC is ready)
@@ -340,7 +352,7 @@ int main(void) {
             printf("\n");
 
             // Boot message complete - LEDs can now show normal status
-            boot_complete = true;
+            led_boot_complete();
         }
 
         if (kb.status != previous_status) {
@@ -456,7 +468,30 @@ int main(void) {
             __wfe();
         }
     }
+    // Loop never exits
+}
 
+/*------------- MAIN ENTRY POINT -------------*/
+
+/**
+ * @brief Main entry point
+ *
+ * Initializes all subsystems and enters the main event loop.
+ * Critical initialization ordering:
+ *   1. system_init()      - MUST be before Core 1 (flash contention)
+ *   2. launch_core1()     - Starts USB host stack on Core 1
+ *   3. network_init()     - MUST be before peripheral_init() (LED needs wifi_is_initialized())
+ *   4. peripheral_init()  - LED and RGB LED initialization
+ *   5. main_loop()        - Never returns
+ */
+int main(void) {
+    system_init();
+    launch_core1();
+    network_init();
+    peripheral_init();
+    main_loop();
+
+    // Never reached
     return 0;
 }
 
@@ -547,9 +582,17 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
     }
 }
 
-// Invoked when received GET_REPORT control request
-// Application must fill buffer report's content and return its length.
-// Return zero will cause the stack to STALL request
+/*
+ * HID GET_REPORT callback.
+ *
+ * This device operates as a streaming HID proxy. Keyboard input is delivered
+ * asynchronously via the interrupt IN endpoint as reports arrive from the
+ * physical device.
+ *
+ * The proxy does not maintain a persistent snapshot of key state, so there is
+ * no meaningful report to return in response to GET_REPORT. Returning an empty
+ * report is sufficient and expected for keyboard-style HID devices.
+ */
 uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t *buffer,
                                uint16_t reqlen) {
     (void) instance;
@@ -574,20 +617,20 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_t
     // For output reports (e.g., LED status), return current LED state
     else if (report_type == HID_REPORT_TYPE_OUTPUT) {
         if (report_id == ITF_NUM_KEYBOARD && reqlen >= 1) {
-            buffer[0] = current_led_state;
+            buffer[0] = led_get_state();
             return 1;
         }
     }
 
-    // Unsupported report type/id - STALL the request
-    LOG_DEBUG("tud_hid_get_report_cb: Unsupported report_id=%x report_type=%x\n", report_id, report_type);
+    // Unsupported report type/id: return an empty report (no data)
+    LOG_DEBUG("tud_hid_get_report_cb: Unsupported report_id=%x report_type=%x\n",
+              report_id, report_type);
     return 0;
 }
 
 void lock() {
     kb.status = locked;
-    led_on_interval_ms = 0;   // LED off when locked
-    led_off_interval_ms = 0;
+    led_set_intervals(0, 0);   // LED off when locked
     kvstore_clear_encryption_key();  // Clear encryption key from memory
     enc_clear_key();  // Also clear the key in encryption.c
 
@@ -599,8 +642,7 @@ void lock() {
 
 void unlock() {
     kb.status = normal;
-    led_on_interval_ms = 100;    // Slow pulse when unlocked
-    led_off_interval_ms = 2400;
+    led_set_intervals(100, 2400);    // Slow pulse when unlocked
 
 #ifdef PICO_CYW43_SUPPORTED
     // Publish unlock event to MQTT

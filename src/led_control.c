@@ -1,6 +1,7 @@
 #include "led_control.h"
 #include "logging.h"
 #include "pico/stdlib.h"
+#include "pico/util/queue.h"
 
 #ifdef PICO_CYW43_SUPPORTED
 #include "pico/cyw43_arch.h"
@@ -13,6 +14,80 @@
 // Runtime detection: is CYW43 WiFi chip present?
 static bool cyw43_available = false;
 static bool led_initialized = false;
+
+// NumLock LED state management
+static uint8_t current_led_state = 0;       // Current LED state to send to keyboard
+static absolute_time_t next_led_toggle;     // When to toggle LED next
+static uint32_t led_on_interval_ms = 0;     // How long LED stays on (ms)
+static uint32_t led_off_interval_ms = 0;    // How long LED stays off (ms)
+static bool boot_complete = false;          // Set to true after boot message is printed
+static queue_t *leds_queue_ptr = NULL;      // Queue to send LED updates to physical keyboard
+
+void led_set_queue(queue_t *queue) {
+    leds_queue_ptr = queue;
+}
+
+void led_boot_complete(void) {
+    boot_complete = true;
+}
+
+void led_set_intervals(uint32_t on_ms, uint32_t off_ms) {
+    led_on_interval_ms = on_ms;
+    led_off_interval_ms = off_ms;
+}
+
+uint8_t led_get_state(void) {
+    return current_led_state;
+}
+
+void update_status_led(void) {
+    // Track what we last sent to avoid queue spam (CRITICAL for USB stability!)
+    static uint8_t last_sent_state = 0xFF;  // Invalid initial state forces first send
+
+    // Keep LEDs ON until boot message is displayed (power-on indicator)
+    if (!boot_complete) {
+        led_set(true);  // On-board LED ON
+        current_led_state = 0x01;  // NumLock LED ON
+        if (current_led_state != last_sent_state && leds_queue_ptr) {
+            queue_try_add(leds_queue_ptr, &current_led_state);
+            last_sent_state = current_led_state;
+        }
+        return;
+    }
+
+    // Keep LED ON until a keyboard is connected
+    extern volatile bool usb_device_ever_mounted;
+    if (!usb_device_ever_mounted) {
+        // No keyboard connected yet - keep LED ON
+        led_set(true);
+        return;
+    }
+
+    if (led_on_interval_ms == 0 && led_off_interval_ms == 0) {
+        // LED off (locked/blank state)
+        current_led_state = 0;
+    } else if (time_reached(next_led_toggle)) {
+        // Toggle Num Lock LED (bit 0)
+        current_led_state ^= 0x01;
+
+        // Use different interval based on new state
+        uint32_t next_interval = (current_led_state & 0x01) ? led_on_interval_ms : led_off_interval_ms;
+        next_led_toggle = make_timeout_time_ms(next_interval);
+    }
+
+    // Update built-in LED to mirror NumLock state (bit 0)
+    bool led_on = (current_led_state & 0x01) != 0;
+    led_set(led_on);
+
+    // CRITICAL FIX: Only send to physical keyboard when state actually changes!
+    // Previously this ran unconditionally (~1000 times/sec), causing USB transaction
+    // interference on Core 1 which led to keystroke corruption. Now only sends
+    // when LED state changes (~0.4 times/sec), reducing queue traffic by 99.96%.
+    if (current_led_state != last_sent_state && leds_queue_ptr) {
+        queue_try_add(leds_queue_ptr, &current_led_state);
+        last_sent_state = current_led_state;
+    }
+}
 
 void led_init(void) {
     if (led_initialized) {
