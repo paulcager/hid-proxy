@@ -93,6 +93,7 @@ static uint8_t current_led_state = 0;       // Current LED state to send to keyb
 static absolute_time_t next_led_toggle;     // When to toggle LED next
 uint32_t led_on_interval_ms = 0;            // How long LED stays on (ms)
 uint32_t led_off_interval_ms = 0;           // How long LED stays off (ms)
+static bool boot_complete = false;          // Set to true after boot message is printed
 
 // USB suspend/resume state
 volatile bool usb_suspended = false;
@@ -103,6 +104,17 @@ static uint32_t pre_suspend_clock_khz = 0;
 void update_status_led(void) {
     // Track what we last sent to avoid queue spam (CRITICAL for USB stability!)
     static uint8_t last_sent_state = 0xFF;  // Invalid initial state forces first send
+
+    // Keep LEDs ON until boot message is displayed (power-on indicator)
+    if (!boot_complete) {
+        led_set(true);  // On-board LED ON
+        current_led_state = 0x01;  // NumLock LED ON
+        if (current_led_state != last_sent_state) {
+            queue_try_add(&leds_queue, &current_led_state);
+            last_sent_state = current_led_state;
+        }
+        return;
+    }
 
     // Keep LED ON until a keyboard is connected
     extern volatile bool usb_device_ever_mounted;
@@ -303,6 +315,7 @@ int main(void) {
             printf("Board: Raspberry Pi Pico\n");
             printf("PIO-USB: GPIO2 (D+), GPIO3 (D-)\n");
 #endif
+            printf("Firmware: " GIT_COMMIT_HASH "\n");
             printf("State: %s\n", status_string(kb.status));
             printf("Keydefs: %d defined (%d public, %d private)\n", keydef_count, public_count, private_count);
             printf("Keystrokes: %lu received, %lu sent, %lu dropped\n",
@@ -325,6 +338,9 @@ int main(void) {
             printf("Uptime: 5 seconds\n");
             printf("====================================\n");
             printf("\n");
+
+            // Boot message complete - LEDs can now show normal status
+            boot_complete = true;
         }
 
         if (kb.status != previous_status) {

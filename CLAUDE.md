@@ -283,6 +283,50 @@ The text format for macros (used for HTTP/network configuration):
 - Diagnostic buffer size: 256 entries per buffer (diagnostics.h:DIAG_BUFFER_SIZE)
 - Diagnostic memory cost: 16KB RAM when enabled (2 × 256 × 32 bytes), ~12 bytes when disabled (diagnostics.c)
 
+## Memory Constraints and Sizing
+
+*Approximate values - verify in code for exact calculations*
+
+**RP2040 Memory:**
+- Total RAM: 264KB
+- System/stacks/WiFi overhead: ~150-200KB
+- Available for keydefs: ~50-100KB (variable based on features enabled)
+
+**Keydef Memory Usage:**
+- `action_t` structure size: ~132 bytes (hid_proxy.h)
+  - Due to MQTT union member: 2×64 byte strings (topic + message)
+  - HID-only action wastes ~120 bytes per action (optimization opportunity)
+- `keydef_t` overhead: 4 bytes (trigger, count, require_unlock, padding)
+- **Example**: 100-action keydef = 4 + (100 × 132) = ~13.2KB RAM
+- **Practical limit per keydef**: ~300-500 actions (~40-65KB RAM)
+- **Theoretical maximum**: 65,535 actions (`uint16_t count` field limit)
+
+**Queue Sizes and Throughput:**
+- `keyboard_to_tud_queue`: 12 entries (physical keyboard → Core 0)
+- `tud_to_physical_host_queue`: 256 entries (Core 0 → host computer) - hid_proxy.c:222
+- `leds_queue`: 4 entries (host → physical keyboard)
+- Macro playback uses `queue_add_with_backpressure()` - **effectively unlimited** via USB throttling
+- USB HID throughput: ~1000 reports/second (1ms per keystroke at full-speed USB)
+- **Example**: 1000-keystroke macro takes ~1 second to send, 10,000 takes ~10 seconds
+
+**Flash Storage:**
+- Total kvstore: 128KB (kvstore_init.h:KVSTORE_SIZE)
+- Encryption overhead: 29 bytes per keydef (1 byte header + 12 byte IV + 16 byte tag)
+- All keydefs combined must fit in 128KB
+- **Example**: 10 keydefs × 500 actions × 132 bytes = ~660KB would exceed flash limit
+- **Practical limit**: ~100-200 total keydefs with typical sizes (20-50 actions each)
+
+**Performance Characteristics:**
+- Keydef loading: On-demand from flash (minimal startup time)
+- Macro expansion: All actions loaded into RAM before playback starts
+- Network operations: MQTT publish is non-blocking, queued via lwIP
+- USB latency: ~1ms per HID report (full-speed USB polling rate)
+
+**Optimization Opportunities:**
+- Reduce `action_t` size for HID-only actions (currently wastes 120 bytes due to MQTT union)
+- Implement streaming for very large macros (load actions in chunks instead of all at once)
+- Add `ACTION_DELAY` to slow down rapid keystrokes if needed
+
 ## Known Issues/TODOs
 
 From README.md and code comments:

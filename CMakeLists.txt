@@ -31,6 +31,19 @@ project(hid_proxy)
 
 pico_sdk_init()
 
+# Capture git commit hash for version identification
+execute_process(
+    COMMAND git describe --always --dirty --abbrev=8
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_COMMIT_HASH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(NOT GIT_COMMIT_HASH)
+    set(GIT_COMMIT_HASH "unknown")
+endif()
+message(STATUS "Git commit: ${GIT_COMMIT_HASH}")
+
 # Debug: Show board selection
 message(STATUS "PICO_BOARD = ${PICO_BOARD}")
 message(STATUS "PICO_PLATFORM = ${PICO_PLATFORM}")
@@ -352,6 +365,7 @@ target_compile_definitions(hid_proxy PRIVATE
         PN532DEBUG=1
         DEBUG_SERIAL=Serial
         AES256=1
+        GIT_COMMIT_HASH="${GIT_COMMIT_HASH}"
 )
 
 # Pass PICO_CYW43_SUPPORTED to source code as a preprocessor macro

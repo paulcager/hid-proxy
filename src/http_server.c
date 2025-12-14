@@ -45,13 +45,14 @@ static const char *status_cgi_handler(int iIndex, int iNumParams, char *pcParam[
     }
 
     snprintf(http_macros_buffer, sizeof(http_macros_buffer),
-             "{\"locked\":%s,\"web_enabled\":%s,\"expires_in\":%d,\"macros\":%d,\"uptime\":%llu,\"wifi\":%s}",
+             "{\"locked\":%s,\"web_enabled\":%s,\"expires_in\":%d,\"macros\":%d,\"uptime\":%llu,\"wifi\":%s,\"firmware\":\"%s\"}",
              kb.status == locked ? "true" : "false",
              web_state.web_access_enabled ? "true" : "false",
              expires_in,
              num_macros,
              uptime_ms,
-             wifi_is_connected() ? "true" : "false"
+             wifi_is_connected() ? "true" : "false",
+             GIT_COMMIT_HASH
     );
 
     return "/status.json";

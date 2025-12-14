@@ -430,6 +430,7 @@ void print_keydefs() {
     // This avoids potential crashes from malformed keydefs
 
     printf("\n=== KVStore Contents ===\n");
+    printf("Firmware: " GIT_COMMIT_HASH "\n");
     printf("DEBUG: About to call kvs_find...\n");
 
     kvs_find_t ctx;
