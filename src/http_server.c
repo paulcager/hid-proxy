@@ -18,10 +18,10 @@ static char http_macros_buffer[HTTP_MACROS_BUFFER_SIZE];
 static char http_post_buffer[HTTP_MACROS_BUFFER_SIZE];
 static size_t http_post_offset = 0;
 
-// Buffer for unlock password
+// Buffer for unseal password
 #define HTTP_PASSWORD_BUFFER_SIZE 256
 static char http_password_buffer[HTTP_PASSWORD_BUFFER_SIZE];
-static bool is_unlock_request = false;
+static bool is_unseal_request = false;
 
 // Forward declarations of CGI handlers
 static const char *status_cgi_handler(int iIndex, int iNumParams, char *pcParam[], char *pcValue[]);
@@ -45,8 +45,8 @@ static const char *status_cgi_handler(int iIndex, int iNumParams, char *pcParam[
     }
 
     snprintf(http_macros_buffer, sizeof(http_macros_buffer),
-             "{\"locked\":%s,\"web_enabled\":%s,\"expires_in\":%d,\"macros\":%d,\"uptime\":%llu,\"wifi\":%s,\"firmware\":\"%s\"}",
-             kb.status == locked ? "true" : "false",
+             "{\"sealed\":%s,\"web_enabled\":%s,\"expires_in\":%d,\"macros\":%d,\"uptime\":%llu,\"wifi\":%s,\"firmware\":\"%s\"}",
+             kb.status == sealed ? "true" : "false",
              web_state.web_access_enabled ? "true" : "false",
              expires_in,
              num_macros,
@@ -84,27 +84,27 @@ err_t httpd_post_begin(void *connection, const char *uri, const char *http_reque
             return ERR_OK;
         }
 
-        // Check if device is unlocked
-        if (kb.status == locked) {
-            snprintf(response_uri, response_uri_len, "/locked.html");
+        // Check if device is unsealed
+        if (kb.status == sealed) {
+            snprintf(response_uri, response_uri_len, "/sealed.html");
             return ERR_OK;
         }
 
         // Reset buffer
-        is_unlock_request = false;
+        is_unseal_request = false;
         http_post_offset = 0;
         memset(http_post_buffer, 0, sizeof(http_post_buffer));
 
         return ERR_OK;
     }
 
-    if (strcmp(uri, "/unlock") == 0) {
-        // /unlock endpoint is always available (no web access check required)
-        // This allows unlocking the device remotely without physical access
+    if (strcmp(uri, "/unseal") == 0) {
+        // /unseal endpoint is always available (no web access check required)
+        // This allows unsealing the device remotely without physical access
         // Security: Password must be correct, and WiFi must be configured
 
         // Reset password buffer
-        is_unlock_request = true;
+        is_unseal_request = true;
         http_post_offset = 0;
         memset(http_password_buffer, 0, sizeof(http_password_buffer));
 
@@ -118,7 +118,7 @@ err_t httpd_post_begin(void *connection, const char *uri, const char *http_reque
 err_t httpd_post_receive_data(void *connection, struct pbuf *p) {
     (void)connection;
 
-    if (is_unlock_request) {
+    if (is_unseal_request) {
         // Copy password data into password buffer
         if (http_post_offset + p->tot_len < HTTP_PASSWORD_BUFFER_SIZE) {
             pbuf_copy_partial(p, http_password_buffer + http_post_offset, p->tot_len, 0);
@@ -148,27 +148,27 @@ void httpd_post_finished(void *connection, char *response_uri, u16_t response_ur
 
     LOG_INFO("POST finished, processing %zu bytes\n", http_post_offset);
 
-    if (is_unlock_request) {
-        // Handle unlock request
-        LOG_INFO("Processing unlock request\n");
+    if (is_unseal_request) {
+        // Handle unseal request
+        LOG_INFO("Processing unseal request\n");
 
-        // Attempt to unlock with provided password
-        bool success = enc_unlock_with_password(http_password_buffer);
+        // Attempt to unseal with provided password
+        bool success = enc_unseal_with_password(http_password_buffer);
 
         // Clear password buffer immediately
         memset(http_password_buffer, 0, sizeof(http_password_buffer));
 
         if (success) {
             // Update device status
-            unlock();
-            LOG_INFO("Device unlocked via HTTP\n");
-            snprintf(response_uri, response_uri_len, "/unlock_success.json");
+            unseal();
+            LOG_INFO("Device unsealed via HTTP\n");
+            snprintf(response_uri, response_uri_len, "/unseal_success.json");
         } else {
-            LOG_INFO("Unlock failed - incorrect password\n");
-            snprintf(response_uri, response_uri_len, "/unlock_failed.json");
+            LOG_INFO("Unseal failed - incorrect password\n");
+            snprintf(response_uri, response_uri_len, "/unseal_failed.json");
         }
 
-        is_unlock_request = false;
+        is_unseal_request = false;
     } else {
         // Handle macros POST
         // Parse and save directly to kvstore
@@ -191,9 +191,9 @@ int fs_open_custom(struct fs_file *file, const char *name) {
             return 0;  // Not found
         }
 
-        // Check if device is unlocked
-        if (kb.status == locked) {
-            LOG_INFO("GET /macros.txt denied - device locked\n");
+        // Check if device is unsealed
+        if (kb.status == sealed) {
+            LOG_INFO("GET /macros.txt denied - device sealed\n");
             return 0;  // Not found
         }
 
@@ -227,9 +227,9 @@ int fs_open_custom(struct fs_file *file, const char *name) {
         return 1;
     }
 
-    if (strcmp(name, "/unlock_success.json") == 0) {
+    if (strcmp(name, "/unseal_success.json") == 0) {
         snprintf(http_macros_buffer, sizeof(http_macros_buffer),
-                 "{\"success\":true,\"message\":\"Device unlocked successfully\"}");
+                 "{\"success\":true,\"message\":\"Device unsealed successfully\"}");
         memset(file, 0, sizeof(struct fs_file));
         file->data = http_macros_buffer;
         file->len = strlen(http_macros_buffer);
@@ -237,7 +237,7 @@ int fs_open_custom(struct fs_file *file, const char *name) {
         return 1;
     }
 
-    if (strcmp(name, "/unlock_failed.json") == 0) {
+    if (strcmp(name, "/unseal_failed.json") == 0) {
         snprintf(http_macros_buffer, sizeof(http_macros_buffer),
                  "{\"success\":false,\"message\":\"Incorrect password\"}");
         memset(file, 0, sizeof(struct fs_file));

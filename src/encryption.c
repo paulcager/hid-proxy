@@ -64,7 +64,7 @@ void enc_clear_key() {
     enc_clear_password();
 }
 
-bool enc_unlock_with_password(const char *password) {
+bool enc_unseal_with_password(const char *password) {
     if (!password) {
         return false;
     }
@@ -81,7 +81,7 @@ bool enc_unlock_with_password(const char *password) {
     // Derive key from password
     enc_derive_key_from_password();
 
-    // Try to unlock with the derived key
+    // Try to unseal with the derived key
     uint8_t derived_key[16];
     enc_get_key(derived_key, sizeof(derived_key));
     bool success = kvstore_set_encryption_key(derived_key);

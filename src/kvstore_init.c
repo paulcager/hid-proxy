@@ -22,7 +22,7 @@
 #define TAG_SIZE 16   // GCM authentication tag size
 
 // Encryption key and state
-static bool device_unlocked = false;
+static bool device_unsealed = false;
 static uint8_t encryption_key[16];  // AES-128 key from PBKDF2
 static bool encryption_key_available = false;
 
@@ -92,9 +92,9 @@ bool kvstore_set_encryption_key(const uint8_t key[16]) {
         // Store the encryption key and unlock
         memcpy(encryption_key, key, 16);
         encryption_key_available = true;
-        device_unlocked = true;
+        device_unsealed = true;
 
-        printf("kvstore_init: Password set successfully (device unlocked)\n");
+        printf("kvstore_init: Password set successfully (device unsealed)\n");
         return true;
 
     } else if (ret != 0) {
@@ -124,13 +124,13 @@ bool kvstore_set_encryption_key(const uint8_t key[16]) {
             // Password correct - unlock device
             memcpy(encryption_key, key, 16);
             encryption_key_available = true;
-            device_unlocked = true;
+            device_unsealed = true;
 
-            printf("kvstore_init: Password correct (device unlocked)\n");
+            printf("kvstore_init: Password correct (device unsealed)\n");
             return true;
         } else {
             // Password incorrect - reject
-            printf("kvstore_init: Password incorrect (device remains locked)\n");
+            printf("kvstore_init: Password incorrect (device remains sealed)\n");
             return false;
         }
     }
@@ -140,12 +140,12 @@ void kvstore_clear_encryption_key(void) {
     // Clear the encryption key from memory
     memset(encryption_key, 0, sizeof(encryption_key));
     encryption_key_available = false;
-    device_unlocked = false;
-    printf("kvstore_init: Encryption key cleared (device locked)\n");
+    device_unsealed = false;
+    printf("kvstore_init: Encryption key cleared (device sealed)\n");
 }
 
-bool kvstore_is_unlocked(void) {
-    return device_unlocked;
+bool kvstore_is_unsealed(void) {
+    return device_unsealed;
 }
 
 /*! \brief Encrypt data using AES-128-GCM
@@ -411,9 +411,9 @@ int kvstore_get_value(const char *key, void *buffer, size_t bufsize, size_t *act
 bool kvstore_change_password(const uint8_t new_key[16]) {
     printf("kvstore_change_password: Starting password change...\n");
 
-    // Must be unlocked to change password
-    if (!device_unlocked || !encryption_key_available) {
-        printf("kvstore_change_password: Device must be unlocked to change password\n");
+    // Must be unsealed to change password
+    if (!device_unsealed || !encryption_key_available) {
+        printf("kvstore_change_password: Device must be unsealed to change password\n");
         return false;
     }
 
@@ -514,7 +514,7 @@ bool kvstore_change_password(const uint8_t new_key[16]) {
     // Step 3: Update encryption key in memory
     memcpy(encryption_key, new_key, 16);
     encryption_key_available = true;
-    device_unlocked = true;
+    device_unsealed = true;
 
     // Step 4: Re-encrypt all keydefs with NEW key
     for (size_t i = 0; i < keydef_count; i++) {

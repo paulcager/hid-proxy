@@ -184,15 +184,15 @@ bool mqtt_client_init(void) {
     return true;
 }
 
-void mqtt_publish_lock_state(bool locked) {
+void mqtt_publish_seal_state(bool sealed) {
     if (!mqtt_state.connected || !mqtt_state.client) {
         return;
     }
 
     char topic[TOPIC_LEN];
-    snprintf(topic, sizeof(topic), "%s/lock", mqtt_state.topic_prefix);
+    snprintf(topic, sizeof(topic), "%s/seal", mqtt_state.topic_prefix);
 
-    const char *msg = locked ? "locked" : "unlocked";
+    const char *msg = sealed ? "sealed" : "unsealed";
 
     LOG_INFO("Publishing MQTT: %s = %s\n", topic, msg);
 

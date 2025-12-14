@@ -247,7 +247,7 @@ void nfc_write_key(uint8_t *key, size_t key_length, unsigned long timeout_millis
 }
 
 void nfc_bad_key() {
-    // The key we returned did not unlock the data. Pause NFC for a while
+    // The key we returned did not unseal the data. Pause NFC for a while
     // to give the user a chance to remove the key.
     state.status = idle_until;
     state.idle_finish = make_timeout_time_ms(2000);

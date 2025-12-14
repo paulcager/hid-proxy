@@ -8,18 +8,18 @@ A USB HID keyboard proxy for Raspberry Pi Pico (or Pico W) that intercepts and p
 - **Pass-through mode**: Keystrokes normally pass directly from physical keyboard to host
 - **Text expansion**: Define single keystrokes that expand to sequences (macros)
 - **Encrypted storage**: Key definitions stored in flash using pico-kvstore with AES-128-GCM encryption
-- **Public/Private keydefs**: Public macros work when locked; private macros require unlock
+- **Public/Private keydefs**: Public macros work when sealed; private macros require unseal
 - **On-demand loading**: Reduced memory usage - keydefs loaded from flash as needed
 - **Passphrase unlock**: Decrypt private key definitions with password (PBKDF2 key derivation)
 - **NFC authentication**: *Optional, disabled by default.* Store/read encryption keys from NFC tags (enable with `--nfc` build flag)
-- **Auto-lock**: Automatically locks after 120 minutes of inactivity
+- **Auto-seal**: Automatically locks after 120 minutes of inactivity
 
 **Pico W exclusive features:**
 - **WiFi/HTTP configuration**: Edit macros via HTTP API without USB re-enumeration
 - **Serial WiFi setup**: Configure WiFi credentials via UART console (both-shifts+F12)
 - **Physical web unlock**: Both-shifts+SPACE enables 5-minute web access window
 - **mDNS support**: Access device at `hidproxy-XXXX.local` (XXXX = last 4 digits of board ID)
-- **MQTT integration**: Publish lock/unlock events to Home Assistant (optional, with TLS support)
+- **MQTT integration**: Publish seal/unseal events to Home Assistant (optional, with TLS support)
 - **Password change**: Change encryption password without erasing device (both-shifts+INSERT)
 
 ## Hardware Requirements
@@ -145,11 +145,11 @@ To access special functions:
 
 | Key      | Description                                                                                                                                                          |
 |----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `ENTER`  | **When locked:** Start passphrase entry to unlock encrypted key definitions. Type your passphrase, then press `ENTER` again to submit. Wrong passwords are rejected. |
-| `INSERT` | **When unlocked:** Change passphrase and re-encrypt all private key definitions with new password. **New!** Full password change now supported.                      |
+| `ENTER`  | **When sealed:** Start passphrase entry to unseal encrypted key definitions. Type your passphrase, then press `ENTER` again to submit. Wrong passwords are rejected. |
+| `INSERT` | **When unsealed:** Change passphrase and re-encrypt all private key definitions with new password. **New!** Full password change now supported.                      |
 | `ESC`    | Cancel the current operation (e.g., exit passphrase entry or key definition mode).                                                                                   |
 | `DEL`    | **Erase everything** - immediately deletes encryption key and all key definitions from flash. No confirmation prompt. Cannot be undone!                              |
-| `END`    | Lock device and clear decrypted key definitions from memory. Encrypted data in flash is preserved. Re-enter passphrase (double-shift + `ENTER`) to unlock.           |
+| `END`    | Seal device and clear decrypted key definitions from memory. Encrypted data in flash is preserved. Re-enter passphrase (double-shift + `ENTER`) to unseal.           |
 | `=`      | Start defining/redefining a key. Next keystroke is the trigger key, following keystrokes are the expansion. End with another double-shift.                           |
 | `SPACE`  | Print all current key definitions to serial console (debug output) and enable web access for 5 minutes. Useful for viewing configured macros via UART.               |
 | `F12`    | **Pico W only:** Start WiFi configuration console via serial UART. Configure WiFi SSID, password, and country code interactively. **New!**                           |
@@ -170,8 +170,8 @@ To set up encryption:
 
 **Important:**
 - Passphrases support any keyboard characters (keycodes only, not multi-byte Unicode)
-- Private keydefs (default) require unlock to access
-- Public keydefs work even when locked (useful for non-sensitive macros)
+- Private keydefs (default) require unseal to access
+- Public keydefs work even when sealed (useful for non-sensitive macros)
 - **Password validation works:** Wrong passwords are rejected, keeping encryption key out of memory
 - **Password change not implemented:** To change password, you must erase device (double-shift + DEL) and start over
 - There's no password recovery - if you forget it, use double-shift + `DEL` to erase and start over
@@ -258,7 +258,7 @@ Let's define the letter `m` to expand to "meeting@example.com":
 4. Type `meeting@example.com` (this is the expansion)
 5. **Double-shift** again to finish
 
-Now whenever you press `m` (while unlocked), it will type out "meeting@example.com".
+Now whenever you press `m` (while unsealed), it will type out "meeting@example.com".
 
 **Note:** Key definitions trigger on the keycode alone, ignoring modifier keys. So defining `m` will also trigger when you press Shift+M (instead of typing 'M').
 
@@ -272,14 +272,14 @@ NFC tags can store your encryption key for quick unlock without typing a passphr
 - You must have already set up a passphrase (see First-Time Setup above)
 
 1. **Store key to tag:**
-   - Ensure device is unlocked (if locked, double-shift + `ENTER`, type passphrase, `ENTER`)
+   - Ensure device is unsealed (if sealed, double-shift + `ENTER`, type passphrase, `ENTER`)
    - Place Mifare Classic tag on PN532 reader
    - Double-shift + `PRINT`
    - Encryption key is written to tag block 0x3A
 
 2. **Authenticate with tag:**
-   - When device is locked, place the NFC tag on the reader
-   - Device automatically reads key and unlocks (if tag contains valid key)
+   - When device is sealed, place the NFC tag on the reader
+   - Device automatically reads key and unseals (if tag contains valid key)
    - No passphrase needed!
 
 ## Debug/Serial Output
@@ -316,13 +316,13 @@ After reboot, go through the keyboard setup assistant when prompted.
 
 ### Key Definitions Not Working
 
-1. Ensure device is unlocked (double-shift + `ENTER`, enter passphrase)
+1. Ensure device is unsealed (double-shift + `ENTER`, enter passphrase)
 2. Check that key definition was saved (double-shift at end of definition)
-3. Verify not in locked state (auto-locks after 120 minutes)
+3. Verify not in sealed state (auto-seals after 120 minutes)
 
-### Wrong Passphrase / Can't Unlock
+### Wrong Passphrase / Can't Unseal
 
-1. Device provides **no visual feedback** for wrong passphrase - it just stays locked
+1. Device provides **no visual feedback** for wrong passphrase - it just stays sealed
 2. Connect to serial console (see Debug/Serial Output section) to check for "Could not decrypt" errors
 3. If you've forgotten the passphrase:
    - Double-shift + `DEL` to erase everything and start over
@@ -352,7 +352,7 @@ Key constants in `hid_proxy.h`:
 | Constant                | Value      | Description                           |
 |-------------------------|------------|---------------------------------------|
 | `FLASH_STORE_SIZE`      | 64 KB      | Maximum size for key definitions      |
-| `IDLE_TIMEOUT_MILLIS`   | 120 min    | Auto-lock timeout                     |
+| `IDLE_TIMEOUT_MILLIS`   | 120 min    | Auto-seal timeout                     |
 
 ### Modifying Flash Storage Size
 
@@ -393,7 +393,7 @@ See **BUGS.md** for a comprehensive list of 34+ bugs including:
 - ✅ Migrated from custom flash storage to pico-kvstore with on-demand loading
 - ✅ Upgraded encryption: AES-128-GCM with authentication (mbedtls)
 - ✅ Password validation: SHA256 hash verification, rejects incorrect passwords
-- ✅ Public/private keydef support (public macros work when locked)
+- ✅ Public/private keydef support (public macros work when sealed)
 - ✅ Removed 10-second WiFi startup delay
 - ✅ Cleaned up deprecated code (kb.local_store removed)
 - See **KVSTORE_STATUS.md** for current status and **KVSTORE_MIGRATION.md** for migration details

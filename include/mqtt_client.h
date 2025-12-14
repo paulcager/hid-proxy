@@ -7,9 +7,9 @@
 // Returns true if MQTT is configured and client initialized successfully
 bool mqtt_client_init(void);
 
-// Publish lock state change event
-// state: true = locked, false = unlocked
-void mqtt_publish_lock_state(bool locked);
+// Publish seal state change event
+// state: true = sealed, false = unsealed
+void mqtt_publish_seal_state(bool sealed);
 
 // Publish custom message to arbitrary topic (for keydef macros)
 // topic: MQTT topic string (e.g., "hidproxy/light/bedroom")

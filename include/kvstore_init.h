@@ -50,11 +50,11 @@ bool kvstore_set_encryption_key(const uint8_t key[16]);
  */
 void kvstore_clear_encryption_key(void);
 
-/*! \brief Check if device is unlocked
+/*! \brief Check if device is unsealed
  *
- * \return true if device unlocked, false otherwise
+ * \return true if device unsealed, false otherwise
  */
-bool kvstore_is_unlocked(void);
+bool kvstore_is_unsealed(void);
 
 /*! \brief Change password and re-encrypt all encrypted data
  *

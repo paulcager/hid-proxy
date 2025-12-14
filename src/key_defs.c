@@ -44,7 +44,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
 
     if (kb_report->modifier == 0x22 && key0 == HID_KEY_D) {
                     // Dump diagnostic keystroke buffers
-                    unlock();
+                    unseal();
                     diag_dump_buffers();
                     return;
     }
@@ -89,29 +89,29 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     return;
             }
 
-        case locked:
+        case sealed:
             if (kb_report->modifier == 0x22 && key0 == 0) {
-                kb.status = locked_seen_magic;
+                kb.status = sealed_seen_magic;
             } else {
                 add_to_host_queue_realtime(0, ITF_NUM_KEYBOARD, sizeof(hid_keyboard_report_t), kb_report);
             }
 
             return;
 
-        case locked_seen_magic:
+        case sealed_seen_magic:
             // Wait for all keys to be released before accepting commands
             if (kb_report->modifier == 0x00 && key0 == 0) {
-                kb.status = locked_expecting_command;
+                kb.status = sealed_expecting_command;
             }
             return;
 
-        case locked_expecting_command:
+        case sealed_expecting_command:
             switch (key0) {
                 case 0:
                     return;
 
                 case HID_KEY_ESCAPE:
-                    kb.status = locked;
+                    kb.status = sealed;
                     return;
 
                 case HID_KEY_ENTER:
@@ -122,7 +122,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     return;
 
                 case HID_KEY_INSERT:
-                    // Change password while locked (will re-encrypt)
+                    // Change password while sealed (will re-encrypt)
                     kb.status = entering_new_password;
                     led_set_intervals(50, 50);   // Fast flash during password entry
                     enc_clear_password();
@@ -135,9 +135,9 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     return;
 
                 default:
-                    // Try to evaluate public keydefs even when locked
+                    // Try to evaluate public keydefs even when sealed
                     // evaluate_keydef() will only succeed for public (unencrypted) keydefs
-                    kb.status = locked;
+                    kb.status = sealed;
                     evaluate_keydef(kb_report, key0);
                     return;
             }
@@ -162,23 +162,23 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                 if (!password_ok) {
                     // Wrong password
                     printf("Incorrect password\n");
-                    kb.status = locked;
-                    led_set_intervals(0, 0);   // LED off when locked
+                    kb.status = sealed;
+                    led_set_intervals(0, 0);   // LED off when sealed
                     enc_clear_key();
                 } else if (kb.status == entering_password) {
                     // Unlocking - no need to re-save anything
-                    unlock();
-                    printf("Unlocked\n");
+                    unseal();
+                    printf("Unsealed\n");
                 } else {
-                    // Changing password while unlocked
+                    // Changing password while unsealed
                     // Re-encrypt all encrypted keydefs with new password
                     if (kvstore_change_password(key)) {
                         printf("Password changed successfully - all data re-encrypted\n");
-                        unlock();
+                        unseal();
                     } else {
                         printf("Password change failed\n");
-                        kb.status = locked;
-                        led_set_intervals(0, 0);   // LED off when locked
+                        kb.status = sealed;
+                        led_set_intervals(0, 0);   // LED off when sealed
                         enc_clear_key();
                     }
                 }
@@ -186,7 +186,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
 
             return;
 
-        case normal:
+        case unsealed:
             if (kb_report->modifier == 0x22 && key0 == 0) {
                 kb.status = seen_magic;
                 led_set_intervals(50, 50);   // Fast flash during command mode
@@ -216,17 +216,17 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     uint8_t key[32];
                     enc_get_key(key, sizeof(key));
                     nfc_write_key(key, sizeof(key), 30 * 1000);
-                    unlock();
+                    unseal();
                     return;
                 }
 #else
                     // NFC not enabled - ignore PRINT_SCREEN command
-                    unlock();
+                    unseal();
                     return;
 #endif
 
                 case HID_KEY_ESCAPE:
-                    unlock();
+                    unseal();
                     return;
 
                 case HID_KEY_EQUAL:
@@ -234,7 +234,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     return;
 
                 case HID_KEY_SPACE:
-                    unlock();
+                    unseal();
                     print_keydefs();
 #ifdef PICO_CYW43_SUPPORTED
                     web_access_enable();
@@ -242,9 +242,9 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     return;
 
                 case HID_KEY_ENTER:
-                    // When unlocked, ENTER now starts capturing keystrokes to unlock (if locked).
+                    // When unsealed, ENTER just unseals (password entry moved to when sealed).
                     // Re-encryption moved to INSERT to avoid accidental data loss.
-                    unlock();
+                    unseal();
                     return;
 
                 case HID_KEY_INSERT:
@@ -258,7 +258,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     return;
 
                 case HID_KEY_END:
-                    lock();  // Sets LED to off (0ms) internally
+                    seal();  // Sets LED to off (0ms) internally
                     return;
 
                 case HID_KEY_F12:
@@ -266,17 +266,17 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     // WiFi configuration console
                     printf("\nStarting WiFi configuration...\n");
                     wifi_console_setup();
-                    unlock();
+                    unseal();
                     return;
 #else
                     // WiFi not supported on this hardware
                     printf("WiFi not supported on this hardware\n");
-                    unlock();
+                    unseal();
                     return;
 #endif
 
                 default:
-                    unlock();
+                    unseal();
                     evaluate_keydef(kb_report, key0);
                     return;
             }
@@ -306,7 +306,7 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     kb.key_being_defined = NULL;
                 }
 
-                unlock();
+                unseal();
                 return;
             }
 
@@ -352,7 +352,7 @@ void start_define(uint8_t key0) {
 void evaluate_keydef(hid_keyboard_report_t *report, uint8_t key0) {
     // Load keydef from kvstore on-demand
     printf("evaluate_keydef: Looking for keydef 0x%02X, device %s\n",
-           key0, kvstore_is_unlocked() ? "UNLOCKED" : "LOCKED");
+           key0, kvstore_is_unsealed() ? "UNSEALED" : "SEALED");
 
     keydef_t *def = keydef_load(key0);
 

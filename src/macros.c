@@ -673,8 +673,8 @@ bool serialize_macros_from_kvstore(char* output_buffer, size_t buffer_size) {
 
     p += snprintf(p, limit - p, "# Macros file - Format: [public|private] trigger { commands... }\n");
     p += snprintf(p, limit - p, "# Commands: \"text\" MNEMONIC ^C [mod:key]\n");
-    p += snprintf(p, limit - p, "# [public] keydefs work when device is locked\n");
-    p += snprintf(p, limit - p, "# [private] keydefs require device unlock (default)\n\n");
+    p += snprintf(p, limit - p, "# [public] keydefs work when device is sealed\n");
+    p += snprintf(p, limit - p, "# [private] keydefs require device unseal (default)\n\n");
     if (p >= limit) {
         printf("serialize_macros_from_kvstore: Buffer overflow in header\n");
         return false;
@@ -871,8 +871,8 @@ bool serialize_macros(const store_t* store, char* output_buffer, size_t buffer_s
 
     p += snprintf(p, limit - p, "# Macros file - Format: [public|private] trigger { commands... }\n");
     p += snprintf(p, limit - p, "# Commands: \"text\" MNEMONIC ^C [mod:key]\n");
-    p += snprintf(p, limit - p, "# [public] keydefs work when device is locked\n");
-    p += snprintf(p, limit - p, "# [private] keydefs require device unlock (default)\n\n");
+    p += snprintf(p, limit - p, "# [public] keydefs work when device is sealed\n");
+    p += snprintf(p, limit - p, "# [private] keydefs require device unseal (default)\n\n");
     if (p >= limit) panic("Buffer overflow in serializer header");
 
     for (const keydef_t* def = store->keydefs; def->trigger != 0 && (void*)def < (void*)store + FLASH_STORE_SIZE; def = next_keydef(def)) {

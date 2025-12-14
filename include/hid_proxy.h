@@ -46,11 +46,11 @@ typedef struct {
 typedef enum {
     blank = 0,
     blank_seen_magic,
-    locked,
-    locked_seen_magic,
-    locked_expecting_command,
+    sealed,
+    sealed_seen_magic,
+    sealed_expecting_command,
     entering_password,
-    normal,
+    unsealed,
     seen_magic,
     expecting_command,
     seen_assign,
@@ -64,16 +64,16 @@ inline const char *status_string(status_t s) {
             return "blank";
         case blank_seen_magic:
             return "blank_seen_magic";
-        case locked:
-            return "locked";
-        case locked_seen_magic:
-            return "locked_seen_magic";
-        case locked_expecting_command:
-            return "locked_expecting_command";
+        case sealed:
+            return "sealed";
+        case sealed_seen_magic:
+            return "sealed_seen_magic";
+        case sealed_expecting_command:
+            return "sealed_expecting_command";
         case entering_password:
             return "entering_password";
-        case normal:
-            return "normal";
+        case unsealed:
+            return "unsealed";
         case seen_magic:
             return "seen_magic";
         case expecting_command:

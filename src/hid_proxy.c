@@ -28,6 +28,20 @@
  *   - The two cores communicate via queues, which decouple USB timing from
  *     key event production and provide backpressure handling.
  *
+ * HID Proxy High-Level Overview:
+ *
+ *  +----------------+     HID events     +-----------------+
+ *  | Physical HID   | <- USB Host (Core1)| Queue           |
+ *  | Devices        |                    | keyboard_to_tud |
+ *  +----------------+                    +-----------------+
+ *         |                                              |
+ *         v        USB Device (Core0)                     v
+ *  +----------------+       HID reports       +----------------+
+ *  | Upstream Host  | <---------------------- | Proxy Device    |
+ *  +----------------+                        +------------------+
+ *
+ *
+ *
  * This file coordinates:
  *   - System initialization and main event loop
  *   - USB suspend/resume handling
@@ -213,8 +227,8 @@ static void system_init(void) {
     diagnostics_init();
 
     // Set initial state
-    LOG_INFO("Setting initial state to locked\n");
-    kb.status = locked;
+    LOG_INFO("Setting initial state to sealed\n");
+    kb.status = sealed;
 }
 
 /**
@@ -266,8 +280,8 @@ static void peripheral_init(void) {
     // Initialize WS2812 RGB LED for status indication
     if (ws2812_led_init()) {
         LOG_INFO("WS2812 RGB LED initialized successfully\n");
-        // Set initial color based on locked state
-        ws2812_led_update_status(locked, false);
+        // Set initial color based on sealed state
+        ws2812_led_update_status(sealed, false);
     } else {
         LOG_ERROR("Failed to initialize WS2812 RGB LED\n");
     }
@@ -283,14 +297,14 @@ static void peripheral_init(void) {
  * - LED updates
  * - Network tasks (WiFi, HTTP, MQTT)
  * - NFC authentication
- * - Idle timeout locking
+ * - Idle timeout sealing
  * - Queue processing between cores
  */
 static void main_loop(void) {
     LOG_INFO("Starting main event loop\n");
     absolute_time_t last_interaction = get_absolute_time();
     absolute_time_t start_time = get_absolute_time();
-    status_t previous_status = locked;
+    status_t previous_status = sealed;
     bool status_message_printed = false;
 #ifdef PICO_CYW43_SUPPORTED
     bool http_server_started = false;
@@ -383,7 +397,7 @@ static void main_loop(void) {
 #endif
 
 #ifdef ENABLE_NFC
-            nfc_task(kb.status == locked);
+            nfc_task(kb.status == sealed);
 #endif
 
 #ifdef PICO_CYW43_SUPPORTED
@@ -426,7 +440,7 @@ static void main_loop(void) {
             }
         }
 
-        if (kb.status == locked) {
+        if (kb.status == sealed) {
 #ifdef ENABLE_NFC
             if (nfc_key_available()) {
                 uint8_t key[32];  // Full 32-byte AES-256 key (use first 16 bytes for AES-128)
@@ -443,7 +457,7 @@ static void main_loop(void) {
                     if (test_def != NULL) {
                         // Key is valid
                         free(test_def);
-                        unlock();
+                        unseal();
                         printf("NFC authentication successful\n");
                     } else {
                         // Key is invalid
@@ -451,16 +465,16 @@ static void main_loop(void) {
                     }
                 } else {
                     // No keydefs stored yet - assume key is valid
-                    unlock();
+                    unseal();
                     printf("NFC key accepted (no keydefs to verify)\n");
                 }
             }
 #endif
         }
 
-        if (kb.status != locked && absolute_time_diff_us(last_interaction, get_absolute_time()) > 1000 * IDLE_TIMEOUT_MILLIS) {
+        if (kb.status != sealed && absolute_time_diff_us(last_interaction, get_absolute_time()) > 1000 * IDLE_TIMEOUT_MILLIS) {
             LOG_INFO("Timed out - clearing encrypted data\n");
-            lock();
+            seal();
         }
 
         // When suspended, use __wfe() to sleep until interrupt (saves power)
@@ -628,25 +642,25 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_t
     return 0;
 }
 
-void lock() {
-    kb.status = locked;
-    led_set_intervals(0, 0);   // LED off when locked
+void seal() {
+    kb.status = sealed;
+    led_set_intervals(0, 0);   // LED off when sealed
     kvstore_clear_encryption_key();  // Clear encryption key from memory
     enc_clear_key();  // Also clear the key in encryption.c
 
 #ifdef PICO_CYW43_SUPPORTED
-    // Publish lock event to MQTT
-    mqtt_publish_lock_state(true);
+    // Publish seal event to MQTT
+    mqtt_publish_seal_state(true);
 #endif
 }
 
-void unlock() {
-    kb.status = normal;
-    led_set_intervals(100, 2400);    // Slow pulse when unlocked
+void unseal() {
+    kb.status = unsealed;
+    led_set_intervals(100, 2400);    // Slow pulse when unsealed
 
 #ifdef PICO_CYW43_SUPPORTED
-    // Publish unlock event to MQTT
-    mqtt_publish_lock_state(false);
+    // Publish unseal event to MQTT
+    mqtt_publish_seal_state(false);
 #endif
 }
 
