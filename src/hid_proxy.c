@@ -336,10 +336,10 @@ static void main_loop(void) {
             printf("USB-A: GPIO12 (D+), GPIO13 (D-)\n");
 #elif defined(PICO_CYW43_SUPPORTED)
             printf("Board: Raspberry Pi Pico W\n");
-            printf("PIO-USB: GPIO2 (D+), GPIO3 (D-)\n");
+            printf("PIO-USB: GPIO%d (D+), GPIO%d (D-)\n", USB_HOST_DP_PIN, USB_HOST_DP_PIN + 1);
 #else
             printf("Board: Raspberry Pi Pico\n");
-            printf("PIO-USB: GPIO2 (D+), GPIO3 (D-)\n");
+            printf("PIO-USB: GPIO%d (D+), GPIO%d (D-)\n", USB_HOST_DP_PIN, USB_HOST_DP_PIN + 1);
 #endif
             printf("Firmware: " GIT_COMMIT_HASH "\n");
             printf("State: %s\n", status_string(kb.status));

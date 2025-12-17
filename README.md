@@ -185,7 +185,7 @@ If you have a Pico W, use the WiFi/HTTP interface for easier macro editing. See 
 2. Press **both shift keys + SPACE** on your keyboard to enable web access (5 minutes)
 3. Download macros: `curl http://hidproxy-XXXX.local/macros.txt > macros.txt` (replace XXXX with your board ID)
 4. Edit the file in your favorite text editor
-5. Upload changes: `curl -X POST http://hidproxy-XXXX.local/macros.txt `--data-binary @macros.txt
+5. Upload changes: `curl -X POST http://hidproxy-XXXX.local/macros.txt --data-binary @macros.txt`
 
 **Note:** The mDNS hostname includes the last 4 digits of your board's unique ID (e.g., `hidproxy-a1b2.local`). Check your serial console output for the exact hostname.
 
@@ -431,6 +431,9 @@ An experimental ESP32-S3 port exists in the `esp32-port` branch, developed as a 
 
 For detailed technical information, see:
 - **CLAUDE.md** - Architecture, code locations, building instructions (updated with current encryption design)
+- **docs/UNLOCK_OPTIONS_ANALYSIS.md** - Comprehensive comparison of unlock methods, security trade-offs, and fundamental limitations
+- **docs/BLE_UNLOCK.md** - BLE-based unlock design (not implemented, includes security analysis)
+- **docs/NFC_NDEF_SUPPORT.md** - Adding NDEF support for Android NFC compatibility (not implemented)
 - **KVSTORE_STATUS.md** - Current status, completed work, and remaining TODOs
 - **KVSTORE_MIGRATION.md** - Details of the pico-kvstore migration (completed November 2025)
 - **WIFI_SETUP.md** - WiFi and HTTP API configuration guide (Pico W only)

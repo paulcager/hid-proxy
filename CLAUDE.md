@@ -421,6 +421,26 @@ Keyboard ──USB OTG──> ESP32 #1 (Host)
 - `DUAL_ESP32_POC_COMPLETE.md` - PoC implementation details
 - `esp32_usb_host/` and `esp32_usb_device/` - Working code
 
+## Unlock Methods and Trade-offs
+
+The device supports multiple methods for unsealing (unlocking) encrypted key definitions:
+
+**Currently Implemented:**
+- ✅ **Manual password entry** (both-shifts + ENTER) - Most secure, no extra hardware
+- ✅ **HTTP unlock endpoint** (POST /unseal) - Remote unlock via WiFi, good for widgets/automation
+- ✅ **NFC tag authentication** (optional, --nfc build flag) - Tap physical tag to PN532 reader
+
+**Documented but Not Implemented:**
+- 📄 **BLE unlock with manual confirmation** - See `docs/BLE_UNLOCK.md` (secure, requires custom Android app)
+- 📄 **NDEF tag support** - See `docs/NFC_NDEF_SUPPORT.md` (for Android NFC Tools Pro compatibility)
+
+**Rejected Approaches:**
+- ❌ **Automatic proximity unlock** (BLE/hall sensor/button + auto-response) - Fundamentally insecure, see `docs/UNLOCK_OPTIONS_ANALYSIS.md`
+
+**Key insight:** For truly secure "tap and forget" unlocking, the physical authentication token must travel to the reader (NFC). Any system where a physical trigger on the Pico causes a phone to auto-respond has a security flaw where an attacker can trigger the Pico while the victim's phone (nearby) responds.
+
+**See:** `docs/UNLOCK_OPTIONS_ANALYSIS.md` for comprehensive comparison of all unlock methods, security trade-offs, and why certain combinations are impossible.
+
 ## Future Development
 
 See CONFIGURATION_OPTIONS.md for additional planned features:

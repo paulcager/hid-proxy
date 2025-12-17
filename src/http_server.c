@@ -247,6 +247,26 @@ int fs_open_custom(struct fs_file *file, const char *name) {
         return 1;
     }
 
+    if (strcmp(name, "/success.html") == 0) {
+        snprintf(http_macros_buffer, sizeof(http_macros_buffer),
+                 "{\"success\":true,\"message\":\"Macros updated successfully\"}");
+        memset(file, 0, sizeof(struct fs_file));
+        file->data = http_macros_buffer;
+        file->len = strlen(http_macros_buffer);
+        file->index = file->len;
+        return 1;
+    }
+
+    if (strcmp(name, "/error.html") == 0) {
+        snprintf(http_macros_buffer, sizeof(http_macros_buffer),
+                 "{\"success\":false,\"message\":\"Failed to parse macros\"}");
+        memset(file, 0, sizeof(struct fs_file));
+        file->data = http_macros_buffer;
+        file->len = strlen(http_macros_buffer);
+        file->index = file->len;
+        return 1;
+    }
+
     return 0;  // Not a custom file
 }
 
