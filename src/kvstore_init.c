@@ -27,8 +27,8 @@ static uint8_t encryption_key[16];  // AES-128 key from PBKDF2
 static bool encryption_key_available = false;
 
 bool kvstore_init(void) {
-    printf("kvstore_init: Initializing pico-kvstore system with AES-128-GCM...\n");
-    printf("kvstore_init: Flash offset=0x%08X, size=%u bytes\n",
+    LOG_INFO("kvstore_init: Initializing pico-kvstore system with AES-128-GCM...\n");
+    LOG_INFO("kvstore_init: Flash offset=0x%08X, size=%u bytes\n",
            KVSTORE_OFFSET, KVSTORE_SIZE);
 
     // Create block device using onboard flash (last 128KB)
@@ -37,26 +37,26 @@ bool kvstore_init(void) {
         KVSTORE_SIZE
     );
     if (blockdev == NULL) {
-        printf("kvstore_init: Failed to create flash block device\n");
+        LOG_ERROR("kvstore_init: Failed to create flash block device\n");
         return false;
     }
-    printf("kvstore_init: Flash block device created\n");
+    LOG_DEBUG("kvstore_init: Flash block device created\n");
 
     // Create log-structured KVS for wear leveling (NO ENCRYPTION LAYER)
     kvs_t *logkvs = kvs_logkvs_create(blockdev);
     if (logkvs == NULL) {
-        printf("kvstore_init: Failed to create log-structured KVS\n");
+        LOG_ERROR("kvstore_init: Failed to create log-structured KVS\n");
         blockdevice_flash_free(blockdev);
         return false;
     }
-    printf("kvstore_init: Log-structured KVS created\n");
+    LOG_DEBUG("kvstore_init: Log-structured KVS created\n");
 
     // Assign as global instance (no securekvs wrapper)
-    printf("kvstore_init: Assigning global KVS instance\n");
+    LOG_DEBUG("kvstore_init: Assigning global KVS instance\n");
     kvs_assign(logkvs);
-    printf("kvstore_init: Global KVS assigned\n");
+    LOG_DEBUG("kvstore_init: Global KVS assigned\n");
 
-    printf("kvstore_init: Initialization complete\n");
+    LOG_DEBUG("kvstore_init: Initialization complete\n");
     return true;
 }
 
@@ -69,7 +69,7 @@ bool kvstore_set_encryption_key(const uint8_t key[16]) {
     uint8_t computed_hash[TC_SHA256_DIGEST_SIZE];  // 32 bytes
     tc_sha256_final(computed_hash, &sha_ctx);
 
-    printf("kvstore_init: Computed hash (first 8 bytes): %02X %02X %02X %02X %02X %02X %02X %02X\n",
+    LOG_DEBUG("kvstore_init: Computed hash (first 8 bytes): %02X %02X %02X %02X %02X %02X %02X %02X\n",
            computed_hash[0], computed_hash[1], computed_hash[2], computed_hash[3],
            computed_hash[4], computed_hash[5], computed_hash[6], computed_hash[7]);
 
@@ -81,11 +81,11 @@ bool kvstore_set_encryption_key(const uint8_t key[16]) {
     if (ret == KVSTORE_ERROR_ITEM_NOT_FOUND) {
         // First-time setup: no password hash exists yet
         // Accept this password and store its hash
-        printf("kvstore_init: First-time setup - storing password hash\n");
+        LOG_DEBUG("kvstore_init: First-time setup - storing password hash\n");
 
         ret = kvstore_set_value(PASSWORD_HASH_KEY, computed_hash, sizeof(computed_hash), false);
         if (ret != 0) {
-            printf("kvstore_init: ERROR - Failed to store password hash: %s\n", kvs_strerror(ret));
+            LOG_ERROR("kvstore_init: ERROR - Failed to store password hash: %s\n", kvs_strerror(ret));
             return false;
         }
 
@@ -94,22 +94,22 @@ bool kvstore_set_encryption_key(const uint8_t key[16]) {
         encryption_key_available = true;
         device_unsealed = true;
 
-        printf("kvstore_init: Password set successfully (device unsealed)\n");
+        LOG_DEBUG("kvstore_init: Password set successfully (device unsealed)\n");
         return true;
 
     } else if (ret != 0) {
         // Error reading hash
-        printf("kvstore_init: ERROR - Failed to read password hash: %s\n", kvs_strerror(ret));
+        LOG_ERROR("kvstore_init: ERROR - Failed to read password hash: %s\n", kvs_strerror(ret));
         return false;
 
     } else {
         // Password hash exists - validate the provided key
-        printf("kvstore_init: Stored hash (first 8 bytes): %02X %02X %02X %02X %02X %02X %02X %02X\n",
+        LOG_DEBUG("kvstore_init: Stored hash (first 8 bytes): %02X %02X %02X %02X %02X %02X %02X %02X\n",
                stored_hash[0], stored_hash[1], stored_hash[2], stored_hash[3],
                stored_hash[4], stored_hash[5], stored_hash[6], stored_hash[7]);
 
         if (hash_size != TC_SHA256_DIGEST_SIZE) {
-            printf("kvstore_init: ERROR - Invalid hash size %zu (expected %d)\n",
+            LOG_ERROR("kvstore_init: ERROR - Invalid hash size %zu (expected %d)\n",
                    hash_size, TC_SHA256_DIGEST_SIZE);
             return false;
         }
@@ -126,11 +126,11 @@ bool kvstore_set_encryption_key(const uint8_t key[16]) {
             encryption_key_available = true;
             device_unsealed = true;
 
-            printf("kvstore_init: Password correct (device unsealed)\n");
+            LOG_DEBUG("kvstore_init: Password correct (device unsealed)\n");
             return true;
         } else {
             // Password incorrect - reject
-            printf("kvstore_init: Password incorrect (device remains sealed)\n");
+            LOG_DEBUG("kvstore_init: Password incorrect (device remains sealed)\n");
             return false;
         }
     }
@@ -141,7 +141,7 @@ void kvstore_clear_encryption_key(void) {
     memset(encryption_key, 0, sizeof(encryption_key));
     encryption_key_available = false;
     device_unsealed = false;
-    printf("kvstore_init: Encryption key cleared (device sealed)\n");
+    LOG_INFO("kvstore_init: Encryption key cleared (device sealed)\n");
 }
 
 bool kvstore_is_unsealed(void) {
@@ -160,7 +160,7 @@ bool kvstore_is_unsealed(void) {
 static int encrypt_gcm(const uint8_t *plaintext, size_t plaintext_len,
                        uint8_t *iv, uint8_t *ciphertext, uint8_t *tag) {
     if (!encryption_key_available) {
-        printf("encrypt_gcm: No encryption key available\n");
+        LOG_ERROR("encrypt_gcm: No encryption key available\n");
         return -1;
     }
 
@@ -176,7 +176,7 @@ static int encrypt_gcm(const uint8_t *plaintext, size_t plaintext_len,
 
     int ret = mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, encryption_key, 128);
     if (ret != 0) {
-        printf("encrypt_gcm: Failed to set key: %d\n", ret);
+        LOG_ERROR("encrypt_gcm: Failed to set key: %d\n", ret);
         mbedtls_gcm_free(&gcm);
         return ret;
     }
@@ -197,7 +197,7 @@ static int encrypt_gcm(const uint8_t *plaintext, size_t plaintext_len,
     mbedtls_gcm_free(&gcm);
 
     if (ret != 0) {
-        printf("encrypt_gcm: Encryption failed: %d\n", ret);
+        LOG_ERROR("encrypt_gcm: Encryption failed: %d\n", ret);
         return ret;
     }
 
@@ -216,7 +216,7 @@ static int encrypt_gcm(const uint8_t *plaintext, size_t plaintext_len,
 static int decrypt_gcm(const uint8_t *ciphertext, size_t ciphertext_len,
                        const uint8_t *iv, const uint8_t *tag, uint8_t *plaintext) {
     if (!encryption_key_available) {
-        printf("decrypt_gcm: No encryption key available\n");
+        LOG_ERROR("decrypt_gcm: No encryption key available\n");
         return KVSTORE_ERROR_AUTHENTICATION_FAILED;
     }
 
@@ -226,7 +226,7 @@ static int decrypt_gcm(const uint8_t *ciphertext, size_t ciphertext_len,
 
     int ret = mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, encryption_key, 128);
     if (ret != 0) {
-        printf("decrypt_gcm: Failed to set key: %d\n", ret);
+        LOG_ERROR("decrypt_gcm: Failed to set key: %d\n", ret);
         mbedtls_gcm_free(&gcm);
         return ret;
     }
@@ -246,10 +246,10 @@ static int decrypt_gcm(const uint8_t *ciphertext, size_t ciphertext_len,
 
     if (ret != 0) {
         if (ret == MBEDTLS_ERR_GCM_AUTH_FAILED) {
-            printf("decrypt_gcm: Authentication failed (wrong key or tampered data)\n");
+            LOG_ERROR("decrypt_gcm: Authentication failed (wrong key or tampered data)\n");
             return KVSTORE_ERROR_AUTHENTICATION_FAILED;
         }
-        printf("decrypt_gcm: Decryption failed: %d\n", ret);
+        LOG_ERROR("decrypt_gcm: Decryption failed: %d\n", ret);
         return ret;
     }
 
@@ -262,7 +262,7 @@ int kvstore_set_value(const char *key, const void *data, size_t size, bool encry
         size_t total_size = 1 + size;
         uint8_t *buffer = (uint8_t *)malloc(total_size);
         if (buffer == NULL) {
-            printf("kvstore_set_value: malloc failed for %zu bytes\n", total_size);
+            LOG_ERROR("kvstore_set_value: malloc failed for %zu bytes\n", total_size);
             return KVSTORE_ERROR_WRITE_FAILED;
         }
 
@@ -279,7 +279,7 @@ int kvstore_set_value(const char *key, const void *data, size_t size, bool encry
     size_t total_size = 1 + IV_SIZE + size + TAG_SIZE;
     uint8_t *buffer = (uint8_t *)malloc(total_size);
     if (buffer == NULL) {
-        printf("kvstore_set_value: malloc failed for %zu bytes\n", total_size);
+        LOG_ERROR("kvstore_set_value: malloc failed for %zu bytes\n", total_size);
         return KVSTORE_ERROR_WRITE_FAILED;
     }
 
@@ -294,13 +294,13 @@ int kvstore_set_value(const char *key, const void *data, size_t size, bool encry
     // Encrypt the data
     int ret = encrypt_gcm((const uint8_t *)data, size, iv, ciphertext, tag);
     if (ret != 0) {
-        printf("kvstore_set_value: Encryption failed\n");
+        LOG_ERROR("kvstore_set_value: Encryption failed\n");
         free(buffer);
         return KVSTORE_ERROR_WRITE_FAILED;
     }
 
-    printf("kvstore_set_value: Encrypted %zu bytes (total stored: %zu bytes)\n", size, total_size);
-    printf("kvstore_set_value: IV: %02X %02X %02X %02X...\n", iv[0], iv[1], iv[2], iv[3]);
+    LOG_DEBUG("kvstore_set_value: Encrypted %zu bytes (total stored: %zu bytes)\n", size, total_size);
+    LOG_DEBUG("kvstore_set_value: IV: %02X %02X %02X %02X...\n", iv[0], iv[1], iv[2], iv[3]);
 
     // Store to kvstore
     ret = kvs_set(key, buffer, total_size);
@@ -315,7 +315,7 @@ int kvstore_get_value(const char *key, void *buffer, size_t bufsize, size_t *act
     size_t temp_size = 1 + IV_SIZE + bufsize + TAG_SIZE;
     uint8_t *temp_buffer = (uint8_t *)malloc(temp_size);
     if (temp_buffer == NULL) {
-        printf("kvstore_get_value: malloc failed for %zu bytes\n", temp_size);
+        LOG_DEBUG("kvstore_get_value: malloc failed for %zu bytes\n", temp_size);
         return KVSTORE_ERROR_READ_FAILED;
     }
 
@@ -330,7 +330,7 @@ int kvstore_get_value(const char *key, void *buffer, size_t bufsize, size_t *act
 
     // Check minimum size (must have at least header byte)
     if (read_size < 1) {
-        printf("kvstore_get_value: Invalid size %zu (no header)\n", read_size);
+        LOG_ERROR("kvstore_get_value: Invalid size %zu (no header)\n", read_size);
         free(temp_buffer);
         return KVSTORE_ERROR_READ_FAILED;
     }
@@ -349,7 +349,7 @@ int kvstore_get_value(const char *key, void *buffer, size_t bufsize, size_t *act
         size_t data_size = read_size - 1;
 
         if (data_size > bufsize) {
-            printf("kvstore_get_value: Buffer too small (need %zu, have %zu)\n", data_size, bufsize);
+            LOG_ERROR("kvstore_get_value: Buffer too small (need %zu, have %zu)\n", data_size, bufsize);
             free(temp_buffer);
             return KVSTORE_ERROR_READ_FAILED;
         }
@@ -370,7 +370,7 @@ int kvstore_get_value(const char *key, void *buffer, size_t bufsize, size_t *act
     // Format: [header(1)][IV(12)][ciphertext(N)][tag(16)]
     size_t min_encrypted_size = 1 + IV_SIZE + TAG_SIZE;
     if (read_size < min_encrypted_size) {
-        printf("kvstore_get_value: Encrypted data too small (%zu bytes)\n", read_size);
+        LOG_ERROR("kvstore_get_value: Encrypted data too small (%zu bytes)\n", read_size);
         free(temp_buffer);
         return KVSTORE_ERROR_READ_FAILED;
     }
@@ -381,12 +381,12 @@ int kvstore_get_value(const char *key, void *buffer, size_t bufsize, size_t *act
     uint8_t *ciphertext = temp_buffer + 1 + IV_SIZE;
     uint8_t *tag = temp_buffer + read_size - TAG_SIZE;
 
-    printf("kvstore_get_value: Decrypting %zu bytes (ciphertext=%zu)\n", read_size, ciphertext_len);
-    printf("kvstore_get_value: IV: %02X %02X %02X %02X...\n", iv[0], iv[1], iv[2], iv[3]);
+    LOG_DEBUG("kvstore_get_value: Decrypting %zu bytes (ciphertext=%zu)\n", read_size, ciphertext_len);
+    LOG_DEBUG("kvstore_get_value: IV: %02X %02X %02X %02X...\n", iv[0], iv[1], iv[2], iv[3]);
 
     // Check buffer size
     if (ciphertext_len > bufsize) {
-        printf("kvstore_get_value: Buffer too small for decrypted data (need %zu, have %zu)\n",
+        LOG_ERROR("kvstore_get_value: Buffer too small for decrypted data (need %zu, have %zu)\n",
                ciphertext_len, bufsize);
         free(temp_buffer);
         return KVSTORE_ERROR_READ_FAILED;
@@ -395,7 +395,7 @@ int kvstore_get_value(const char *key, void *buffer, size_t bufsize, size_t *act
     // Decrypt
     ret = decrypt_gcm(ciphertext, ciphertext_len, iv, tag, (uint8_t *)buffer);
     if (ret != 0) {
-        printf("kvstore_get_value: Decryption failed\n");
+        LOG_ERROR("kvstore_get_value: Decryption failed\n");
         free(temp_buffer);
         return ret;  // Will be KVSTORE_ERROR_AUTHENTICATION_FAILED if auth failed
     }
@@ -409,11 +409,11 @@ int kvstore_get_value(const char *key, void *buffer, size_t bufsize, size_t *act
 }
 
 bool kvstore_change_password(const uint8_t new_key[16]) {
-    printf("kvstore_change_password: Starting password change...\n");
+    LOG_INFO("kvstore_change_password: Starting password change...\n");
 
     // Must be unsealed to change password
     if (!device_unsealed || !encryption_key_available) {
-        printf("kvstore_change_password: Device must be unsealed to change password\n");
+        LOG_INFO("kvstore_change_password: Device must be unsealed to change password\n");
         return false;
     }
 
@@ -423,7 +423,7 @@ bool kvstore_change_password(const uint8_t new_key[16]) {
     char key[64];
     int ret = kvs_find("keydef.", &ctx);
     if (ret != 0) {
-        printf("kvstore_change_password: No keydefs found or error: %s\n", kvs_strerror(ret));
+        LOG_ERROR("kvstore_change_password: No keydefs found or error: %s\n", kvs_strerror(ret));
         // No keydefs to re-encrypt - just update password hash
     }
 
@@ -446,7 +446,7 @@ bool kvstore_change_password(const uint8_t new_key[16]) {
                 size_t max_size = sizeof(keydef_t) + 64 * sizeof(hid_keyboard_report_t);
                 uint8_t *temp_buffer = (uint8_t *)malloc(max_size);
                 if (temp_buffer == NULL) {
-                    printf("kvstore_change_password: malloc failed\n");
+                    LOG_ERROR("kvstore_change_password: malloc failed\n");
                     kvs_find_close(&ctx);
                     goto cleanup_and_fail;
                 }
@@ -457,14 +457,14 @@ bool kvstore_change_password(const uint8_t new_key[16]) {
 
                 if (read_ret == 0 && is_encrypted) {
                     // This is an encrypted keydef - save it for re-encryption
-                    printf("kvstore_change_password: Found encrypted keydef '%s'\n", key);
+                    LOG_DEBUG("kvstore_change_password: Found encrypted keydef '%s'\n", key);
 
                     // Grow array if needed
                     if (keydef_count >= keydef_capacity) {
                         keydef_capacity = keydef_capacity == 0 ? 8 : keydef_capacity * 2;
                         keydef_entry_t *new_keydefs = (keydef_entry_t *)realloc(keydefs, keydef_capacity * sizeof(keydef_entry_t));
                         if (new_keydefs == NULL) {
-                            printf("kvstore_change_password: realloc failed\n");
+                            LOG_ERROR("kvstore_change_password: realloc failed\n");
                             free(temp_buffer);
                             kvs_find_close(&ctx);
                             goto cleanup_and_fail;
@@ -478,7 +478,7 @@ bool kvstore_change_password(const uint8_t new_key[16]) {
 
                     keydefs[keydef_count].def = (keydef_t *)malloc(actual_size);
                     if (keydefs[keydef_count].def == NULL) {
-                        printf("kvstore_change_password: malloc failed for keydef\n");
+                        LOG_ERROR("kvstore_change_password: malloc failed for keydef\n");
                         free(temp_buffer);
                         kvs_find_close(&ctx);
                         goto cleanup_and_fail;
@@ -493,7 +493,7 @@ bool kvstore_change_password(const uint8_t new_key[16]) {
         kvs_find_close(&ctx);
     }
 
-    printf("kvstore_change_password: Found %zu encrypted keydefs to re-encrypt\n", keydef_count);
+    LOG_INFO("kvstore_change_password: Found %zu encrypted keydefs to re-encrypt\n", keydef_count);
 
     // Step 2: Update password hash with NEW key
     struct tc_sha256_state_struct sha_ctx;
@@ -505,11 +505,11 @@ bool kvstore_change_password(const uint8_t new_key[16]) {
 
     ret = kvstore_set_value(PASSWORD_HASH_KEY, new_hash, sizeof(new_hash), false);
     if (ret != 0) {
-        printf("kvstore_change_password: Failed to update password hash: %s\n", kvs_strerror(ret));
+        LOG_ERROR("kvstore_change_password: Failed to update password hash: %s\n", kvs_strerror(ret));
         goto cleanup_and_fail;
     }
 
-    printf("kvstore_change_password: Password hash updated\n");
+    LOG_INFO("kvstore_change_password: Password hash updated\n");
 
     // Step 3: Update encryption key in memory
     memcpy(encryption_key, new_key, 16);
@@ -518,19 +518,19 @@ bool kvstore_change_password(const uint8_t new_key[16]) {
 
     // Step 4: Re-encrypt all keydefs with NEW key
     for (size_t i = 0; i < keydef_count; i++) {
-        printf("kvstore_change_password: Re-encrypting keydef '%s'\n", keydefs[i].key);
+        LOG_DEBUG("kvstore_change_password: Re-encrypting keydef '%s'\n", keydefs[i].key);
 
         size_t size = sizeof(keydef_t) + keydefs[i].def->count * sizeof(hid_keyboard_report_t);
         ret = kvstore_set_value(keydefs[i].key, keydefs[i].def, size, true);
 
         if (ret != 0) {
-            printf("kvstore_change_password: Failed to re-encrypt keydef '%s': %s\n",
+            LOG_ERROR("kvstore_change_password: Failed to re-encrypt keydef '%s': %s\n",
                    keydefs[i].key, kvs_strerror(ret));
             goto cleanup_and_fail;
         }
     }
 
-    printf("kvstore_change_password: Successfully re-encrypted %zu keydefs\n", keydef_count);
+    LOG_DEBUG("kvstore_change_password: Successfully re-encrypted %zu keydefs\n", keydef_count);
 
     // Cleanup
     for (size_t i = 0; i < keydef_count; i++) {
@@ -538,7 +538,7 @@ bool kvstore_change_password(const uint8_t new_key[16]) {
     }
     free(keydefs);
 
-    printf("kvstore_change_password: Password change complete\n");
+    LOG_INFO("kvstore_change_password: Password change complete\n");
     return true;
 
 cleanup_and_fail:
@@ -550,6 +550,6 @@ cleanup_and_fail:
     }
     free(keydefs);
 
-    printf("kvstore_change_password: Password change FAILED\n");
+    LOG_ERROR("kvstore_change_password: Password change FAILED\n");
     return false;
 }

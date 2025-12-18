@@ -27,6 +27,7 @@
 #include "tusb.h"
 #include "usb_descriptors.h"
 #include "hid_proxy.h"
+#include "logging.h"
 
 /* A combination of interfaces must have a unique product id, since PC will save device driver after the first plug.
  *
@@ -109,7 +110,7 @@ uint8_t const desc_hid_mouse_report[] = {
 // Descriptor contents must exist long enough for transfer to complete
 uint8_t const * tud_hid_descriptor_report_cb(uint8_t instance)
 {
-    printf("tud_hid_descriptor_report_cb %d\n", instance);
+    LOG_DEBUG("tud_hid_descriptor_report_cb %d\n", instance);
 //    if (instance == 0) {
 //        hex_dump(desc_hid_keyboard_report, sizeof(desc_hid_keyboard_report));
 //    } else {
@@ -141,7 +142,7 @@ uint8_t const desc_fs_configuration[] =
 uint8_t const * tud_descriptor_configuration_cb(uint8_t index)
 {
   (void) index; // for multiple configurations
-  printf("tud_descriptor_configuration_cb %d\n", index);
+  LOG_DEBUG("tud_descriptor_configuration_cb %d\n", index);
   return desc_fs_configuration;
 }
 

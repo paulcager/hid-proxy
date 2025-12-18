@@ -47,7 +47,7 @@ bool keydef_save(const keydef_t *keydef) {
 
     size_t size = keydef_size(keydef);
 
-    printf("keydef_save: Saving keydef '%s' (0x%02X, %u reports, %zu bytes, %s)\n",
+    LOG_DEBUG("keydef_save: Saving keydef '%s' (0x%02X, %u reports, %zu bytes, %s)\n",
               key, keydef->trigger, keydef->count, size,
               keydef->require_unlock ? "PRIVATE" : "PUBLIC");
 
@@ -56,12 +56,12 @@ bool keydef_save(const keydef_t *keydef) {
     int ret = kvstore_set_value(key, keydef, size, encrypt);
 
     if (ret != 0) {
-        printf("keydef_save: FAILED to save keydef '%s': %s\n",
+        LOG_ERROR("keydef_save: FAILED to save keydef '%s': %s\n",
                   key, kvs_strerror(ret));
         return false;
     }
 
-    printf("keydef_save: Successfully saved keydef '%s'\n", key);
+    LOG_DEBUG("keydef_save: Successfully saved keydef '%s'\n", key);
     return true;
 }
 
@@ -69,14 +69,14 @@ keydef_t *keydef_load(uint8_t trigger) {
     char key[16];
     keydef_make_key(trigger, key);
 
-    printf("keydef_load: Attempting to load keydef '%s' (0x%02X)\n", key, trigger);
+    LOG_DEBUG("keydef_load: Attempting to load keydef '%s' (0x%02X)\n", key, trigger);
 
     // Allocate a reasonable buffer to read into
     // (Max keydef: header + 64 actions * ~130 bytes = ~8.5KB worst case for all-MQTT)
     size_t max_size = sizeof(keydef_t) + 64 * sizeof(action_t);
     uint8_t *temp_buffer = (uint8_t *)malloc(max_size);
     if (temp_buffer == NULL) {
-        printf("keydef_load: Failed to allocate temp buffer\n");
+        LOG_ERROR("keydef_load: Failed to allocate temp buffer\n");
         return NULL;
     }
 
@@ -87,21 +87,21 @@ keydef_t *keydef_load(uint8_t trigger) {
 
     if (ret != 0) {
         if (ret == KVSTORE_ERROR_ITEM_NOT_FOUND) {
-            printf("keydef_load: Keydef '%s' NOT FOUND in kvstore\n", key);
+            LOG_DEBUG("keydef_load: Keydef '%s' NOT FOUND in kvstore\n", key);
         } else {
-            printf("keydef_load: Failed to read keydef '%s': %s\n",
+            LOG_ERROR("keydef_load: Failed to read keydef '%s': %s\n",
                       key, kvs_strerror(ret));
         }
         free(temp_buffer);
         return NULL;
     }
 
-    printf("keydef_load: Successfully read keydef '%s', size=%zu bytes (%s)\n",
+    LOG_DEBUG("keydef_load: Successfully read keydef '%s', size=%zu bytes (%s)\n",
            key, actual_size, is_encrypted ? "ENCRYPTED" : "UNENCRYPTED");
 
     // Sanity check the size
     if (actual_size < sizeof(keydef_t)) {
-        printf("keydef_load: Invalid size %zu (too small, minimum is %zu)\n",
+        LOG_ERROR("keydef_load: Invalid size %zu (too small, minimum is %zu)\n",
                actual_size, sizeof(keydef_t));
         free(temp_buffer);
         return NULL;
@@ -110,7 +110,7 @@ keydef_t *keydef_load(uint8_t trigger) {
     // Allocate the right-sized keydef and copy data
     keydef_t *keydef = (keydef_t *)malloc(actual_size);
     if (keydef == NULL) {
-        printf("keydef_load: malloc failed for %zu bytes\n", actual_size);
+        LOG_ERROR("keydef_load: malloc failed for %zu bytes\n", actual_size);
         free(temp_buffer);
         return NULL;
     }
@@ -118,19 +118,19 @@ keydef_t *keydef_load(uint8_t trigger) {
     memcpy(keydef, temp_buffer, actual_size);
     free(temp_buffer);
 
-    printf("keydef_load: Loaded keydef data (trigger=0x%02X, count=%u)\n",
+    LOG_DEBUG("keydef_load: Loaded keydef data (trigger=0x%02X, count=%u)\n",
               keydef->trigger, keydef->count);
 
     // Verify the loaded data makes sense
     if (keydef->trigger != trigger) {
-        printf("keydef_load: ERROR - trigger mismatch! Expected 0x%02X, got 0x%02X\n",
+        LOG_ERROR("keydef_load: ERROR - trigger mismatch! Expected 0x%02X, got 0x%02X\n",
                trigger, keydef->trigger);
         free(keydef);
         return NULL;
     }
 
     if (keydef->count > 1024) {
-        printf("keydef_load: ERROR - invalid count %u (too large)\n", keydef->count);
+        LOG_ERROR("keydef_load: ERROR - invalid count %u (too large)\n", keydef->count);
         free(keydef);
         return NULL;
     }
