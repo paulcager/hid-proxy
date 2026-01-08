@@ -44,7 +44,6 @@
  *
  * This file coordinates:
  *   - System initialization and main event loop
- *   - USB suspend/resume handling
  *   - HID SET_REPORT / GET_REPORT callbacks
  *   - Queueing and forwarding of HID reports between host and device sides
  *   - High-level lock/unlock and gating logic (e.g. NFC, encryption, timeouts)
@@ -120,56 +119,25 @@ queue_t leds_queue;
 
 // LED control moved to led_control.c
 
-// USB suspend/resume state
-volatile bool usb_suspended = false;
-static uint32_t pre_suspend_clock_khz = 0;
-
 /*------------- LED Status Feedback -------------*/
 // LED logic moved to led_control.c
 
-/*------------- USB Suspend/Resume Callbacks -------------*/
-
-// Invoked when USB bus is suspended
-// remote_wakeup_en: if true, host allows us to send wakeup signal
-void tud_suspend_cb(bool remote_wakeup_en) {
-    usb_suspended = true;
-    LOG_INFO("USB suspended (remote_wakeup=%d)\n", remote_wakeup_en);
-
-    // Save current clock speed
-    pre_suspend_clock_khz = clock_get_hz(clk_sys) / 1000;
-
-#ifdef PICO_CYW43_SUPPORTED
-    // Shut down WiFi to save power
-    if (wifi_is_initialized()) {
-        wifi_suspend();
-    }
-#endif
-
-    // Lower CPU clock to minimum stable frequency
-    set_sys_clock_khz(48000, true);  // 48MHz
-
-    LOG_INFO("Entering low-power mode (48MHz)\n");
-}
-
-// Invoked when USB bus is resumed
-void tud_resume_cb(void) {
-    LOG_INFO("USB resumed\n");
-    usb_suspended = false;
-
-    // Restore CPU clock
-    if (pre_suspend_clock_khz > 0) {
-        set_sys_clock_khz(pre_suspend_clock_khz, true);
-    }
-
-#ifdef PICO_CYW43_SUPPORTED
-    // Resume WiFi
-    if (wifi_is_initialized()) {
-        wifi_resume();
-    }
-#endif
-
-    LOG_INFO("Resumed to normal operation (%lu MHz)\n", clock_get_hz(clk_sys) / 1000000);
-}
+/*------------- USB Suspend/Resume -------------*/
+// NOTE: USB suspend/resume callbacks deliberately NOT implemented.
+//
+// Previously we had tud_suspend_cb() and tud_resume_cb() that would:
+// - Lower CPU clock to save power (120MHz -> 48MHz)
+// - Suspend WiFi to save power
+// - Use __wfe() sleep mode
+//
+// This was REMOVED because:
+// 1. Caused stuck-key bug (PC thought keys were held after resume)
+// 2. Power savings negligible for wall-powered device (~0.5W)
+// 3. Added unnecessary complexity and timing issues
+// 4. Remote wakeup still works without callbacks (TinyUSB handles it)
+//
+// If you need to re-add suspend handling, make sure to send a
+// release_all_keys HID report in tud_resume_cb() to clear stuck keys!
 
 /*------------- INITIALIZATION PHASES -------------*/
 
@@ -387,46 +355,37 @@ static void main_loop(void) {
         tud_task();
         tud_cdc_write_flush();
 
-        // Skip non-critical tasks when suspended to save power
-        if (!usb_suspended) {
-            update_status_led();  // Update LED status feedback
+        // Update LED status feedback
+        update_status_led();
 
 #ifdef BOARD_WS_2350
-            // Update RGB LED animations (e.g. rainbow pulse for web access)
-            ws2812_led_task();
+        // Update RGB LED animations (e.g. rainbow pulse for web access)
+        ws2812_led_task();
 #endif
 
 #ifdef ENABLE_NFC
-            nfc_task(kb.status == sealed);
+        nfc_task(kb.status == sealed);
 #endif
 
 #ifdef PICO_CYW43_SUPPORTED
-            // WiFi tasks (only on Pico W, and only when not suspended)
-            if (!wifi_is_suspended()) {
-                wifi_task();
-                if (wifi_is_connected() && !http_server_started) {
-                    http_server_init();
-                    http_server_started = true;
-                }
-                if (wifi_is_connected() && !mqtt_client_started) {
-                    mqtt_client_started = mqtt_client_init();
-                }
-                http_server_task();
-                mqtt_client_task();
-            }
-#endif
+        // WiFi tasks (only on Pico W)
+        wifi_task();
+        if (wifi_is_connected() && !http_server_started) {
+            http_server_init();
+            http_server_started = true;
         }
+        if (wifi_is_connected() && !mqtt_client_started) {
+            mqtt_client_started = mqtt_client_init();
+        }
+        http_server_task();
+        mqtt_client_task();
+#endif
 
-        // Process keyboard reports even when suspended (needed for remote wakeup)
+        // Process keyboard reports from physical keyboard
         hid_report_t report;
         if (queue_try_remove(&keyboard_to_tud_queue, &report)) {
             last_interaction = get_absolute_time();
             next_report(report);
-
-            // If suspended, try to send remote wakeup signal
-            if (usb_suspended && tud_remote_wakeup()) {
-                LOG_INFO("Sent remote wakeup signal\n");
-            }
         }
 
         // Anything waiting to be sent to the (real) host?
@@ -475,11 +434,6 @@ static void main_loop(void) {
         if (kb.status != sealed && absolute_time_diff_us(last_interaction, get_absolute_time()) > 1000 * IDLE_TIMEOUT_MILLIS) {
             LOG_INFO("Timed out - clearing encrypted data\n");
             seal();
-        }
-
-        // When suspended, use __wfe() to sleep until interrupt (saves power)
-        if (usb_suspended) {
-            __wfe();
         }
     }
     // Loop never exits

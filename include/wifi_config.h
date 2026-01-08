@@ -31,12 +31,7 @@ bool wifi_config_is_valid(const wifi_config_t *config);
 void wifi_init(void);
 void wifi_task(void);
 bool wifi_is_connected(void);
-
-// WiFi power management
-void wifi_suspend(void);
-void wifi_resume(void);
 bool wifi_is_initialized(void);
-bool wifi_is_suspended(void);
 
 // Web access control
 void web_access_enable(void);

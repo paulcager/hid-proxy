@@ -44,6 +44,17 @@ Build support for RP2350 boards exists via Pico SDK 2.2.0, but **USB keyboards a
 
 **Waveshare Board Features**: The RP2350-USB-A build includes WS2812 RGB LED support (GPIO16) for visual status feedback. Build system is complete but non-functional due to PIO-USB issue above.
 
+## Power Management
+
+**USB Suspend/Resume**: Deliberately NOT implemented. Previous versions included `tud_suspend_cb()` and `tud_resume_cb()` callbacks that would lower CPU clock speed and suspend WiFi to save power (~0.5W). This code was **removed** because:
+
+1. **Caused stuck-key bug**: When PC suspended while a key was pressed, the device didn't send a "release all keys" report on resume, causing the PC to think keys were still held down
+2. **Negligible benefit**: Power savings (~0.5W) are meaningless for a wall-powered USB device
+3. **Added complexity**: Clock speed changes introduced timing edge cases and increased code complexity
+4. **Unnecessary**: Remote wakeup (keyboard waking PC from sleep) still works without custom callbacks - TinyUSB handles it automatically
+
+If you need to re-implement suspend handling for some reason, **make sure to send a `release_all_keys` HID report in `tud_resume_cb()`** to clear any stuck key state!
+
 ## Architecture
 
 ### Dual-Core Design
@@ -107,7 +118,7 @@ On first use, any password is accepted and its hash is stored. Subsequent unseal
 - 🔵 **BLUE**: Entering password or defining key
 - 🟡 **YELLOW**: Command mode active (both shifts pressed)
 - 🟣 **PURPLE**: NFC operation in progress (if NFC enabled)
-- ⚪ **WHITE (dim)**: Idle/blank state or USB suspended
+- ⚪ **WHITE (dim)**: Idle/blank state
 - 🟠 **ORANGE**: Error indication (brief flash)
 - 🌈 **RAINBOW (pulsing)**: Web access enabled (5-minute configuration window)
 
