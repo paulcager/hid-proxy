@@ -17,6 +17,7 @@ static bool led_initialized = false;
 
 // NumLock LED state management
 static uint8_t current_led_state = 0;       // Current LED state to send to keyboard
+static uint8_t host_led_state = 0;          // LED state from host PC (CAPS_LOCK, SCROLL_LOCK, etc.)
 static absolute_time_t next_led_toggle;     // When to toggle LED next
 static uint32_t led_on_interval_ms = 0;     // How long LED stays on (ms)
 static uint32_t led_off_interval_ms = 0;    // How long LED stays off (ms)
@@ -25,6 +26,10 @@ static queue_t *leds_queue_ptr = NULL;      // Queue to send LED updates to phys
 
 void led_set_queue(queue_t *queue) {
     leds_queue_ptr = queue;
+}
+
+void led_set_host_state(uint8_t leds) {
+    host_led_state = leds;
 }
 
 void led_boot_complete(void) {
@@ -63,17 +68,26 @@ void update_status_led(void) {
         return;
     }
 
+    // Compute our desired NUM_LOCK state (bit 0)
+    bool numlock_on;
     if (led_on_interval_ms == 0 && led_off_interval_ms == 0) {
         // LED off (locked/blank state)
-        current_led_state = 0;
+        numlock_on = false;
     } else if (time_reached(next_led_toggle)) {
         // Toggle Num Lock LED (bit 0)
-        current_led_state ^= 0x01;
+        numlock_on = !(current_led_state & 0x01);  // Toggle the bit
 
         // Use different interval based on new state
-        uint32_t next_interval = (current_led_state & 0x01) ? led_on_interval_ms : led_off_interval_ms;
+        uint32_t next_interval = numlock_on ? led_on_interval_ms : led_off_interval_ms;
         next_led_toggle = make_timeout_time_ms(next_interval);
+    } else {
+        // Keep current NUM_LOCK state
+        numlock_on = (current_led_state & 0x01) != 0;
     }
+
+    // Merge: Take host's CAPS_LOCK/SCROLL_LOCK (bits 1,2) + our NUM_LOCK (bit 0)
+    // LED bits: 0=NUM_LOCK, 1=CAPS_LOCK, 2=SCROLL_LOCK, 3=COMPOSE, 4=KANA
+    current_led_state = (host_led_state & 0xFE) | (numlock_on ? 0x01 : 0x00);
 
     // Update built-in LED to mirror NumLock state (bit 0)
     bool led_on = (current_led_state & 0x01) != 0;

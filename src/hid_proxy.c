@@ -541,11 +541,10 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
             // bufsize should be (at least) 1
             if (bufsize < 1) return;
 
-            LOG_DEBUG("leds: %x\n", buffer[0]);
-            // LED queue is small (4 items) and low-frequency, use try_add
-            if (!queue_try_add(&leds_queue, buffer)) {
-                LOG_WARNING("LED queue full - dropping LED update\n");
-            }
+            LOG_DEBUG("leds from host: %x\n", buffer[0]);
+            // Update the LED controller with host's LED state
+            // It will merge this with our NUM_LOCK status indication
+            led_set_host_state(buffer[0]);
         }
     }
 }

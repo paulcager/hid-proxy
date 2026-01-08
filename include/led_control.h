@@ -25,6 +25,16 @@ void led_init(void);
 void led_set_queue(queue_t *queue);
 
 /**
+ * @brief Update the host LED state (from PC)
+ *
+ * Call this when the host PC updates LED state (CAPS_LOCK, SCROLL_LOCK, etc.)
+ * The LED controller will merge this with the NUM_LOCK status indication.
+ *
+ * @param leds LED state byte from host
+ */
+void led_set_host_state(uint8_t leds);
+
+/**
  * @brief Set built-in LED state
  *
  * @param on true to turn LED on, false to turn off
