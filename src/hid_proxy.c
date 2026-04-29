@@ -134,7 +134,13 @@ queue_t leds_queue;
 // 1. Caused stuck-key bug (PC thought keys were held after resume)
 // 2. Power savings negligible for wall-powered device (~0.5W)
 // 3. Added unnecessary complexity and timing issues
-// 4. Remote wakeup still works without callbacks (TinyUSB handles it)
+//
+// Remote wakeup (waking host on keypress) is handled in the main loop:
+// when there is a queued report and the bus is suspended, we call
+// tud_remote_wakeup() to ask the host to resume. TinyUSB does NOT do
+// this automatically. The descriptor advertises the capability via
+// TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP; the host enables/disables it
+// through standard SET_FEATURE/CLEAR_FEATURE requests.
 //
 // If you need to re-add suspend handling, make sure to send a
 // release_all_keys HID report in tud_resume_cb() to clear stuck keys!
@@ -392,8 +398,13 @@ static void main_loop(void) {
         // Use tud_hid_n_ready() to check if USB interface can accept new report
         send_data_t to_send;
         if (queue_try_peek(&tud_to_physical_host_queue, &to_send)) {
-            // Check if the specific HID interface (keyboard or mouse) is ready
-            if (tud_hid_n_ready(to_send.report_id)) {
+            if (tud_suspended()) {
+                // Host has suspended the bus (e.g. Mac asleep). Ask it to
+                // resume so we can deliver the keystroke. Will silently
+                // no-op if the host hasn't enabled DEVICE_REMOTE_WAKEUP.
+                tud_remote_wakeup();
+            } else if (tud_hid_n_ready(to_send.report_id)) {
+                // Check if the specific HID interface (keyboard or mouse) is ready
                 queue_try_remove(&tud_to_physical_host_queue, &to_send);
                 send_report_to_host(to_send);
             }
