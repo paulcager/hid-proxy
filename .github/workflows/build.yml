@@ -31,11 +31,11 @@ jobs:
           git clone -b 2.2.0 --depth 1 https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
           cd ~/pico-sdk && git submodule update --init --recursive
 
-      - name: Cache pioasm
+      - name: Cache pioasm build
         id: cache-pioasm
         uses: actions/cache@v4
         with:
-          path: ~/pico-tools/pioasm
+          path: ~/pico-tools/pioasm-build
           key: pioasm-2.2.0
 
       - name: Build pioasm
@@ -45,10 +45,12 @@ jobs:
           cd ~/pico-tools/pioasm-build
           cmake -DPIOASM_VERSION_STRING=2.2.0 ~/pico-sdk/tools/pioasm
           make -j$(nproc)
-          cp pioasm ~/pico-tools/pioasm
 
-      - name: Add pioasm to PATH
-        run: echo "$HOME/pico-tools" >> $GITHUB_PATH
+      - name: Cache build directory (picotool etc)
+        uses: actions/cache@v4
+        with:
+          path: ~/build-cache
+          key: build-cache-pico-sdk-2.2.0-${{ runner.os }}
 
       - name: Configure
         run: |
@@ -57,6 +59,8 @@ jobs:
                 -DPICO_SDK_PATH=$HOME/pico-sdk \
                 -DCMAKE_BUILD_TYPE=Release \
                 -DUSB_HOST_DP_PIN=6 \
+                -DPIOASM_FETCH_FROM_GIT_PATH=$HOME/pico-tools \
+                -DPICOTOOL_FETCH_FROM_GIT_PATH=$HOME/build-cache \
                 ..
 
       - name: Build
