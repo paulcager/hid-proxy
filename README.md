@@ -39,8 +39,10 @@ A USB HID keyboard proxy for Raspberry Pi Pico (or Pico W) that intercepts and p
 ### Wiring
 
 **USB Connections:**
-- Physical keyboard → Pico USB host (via PIO-USB on GPIO 2/3)
+- Physical keyboard → Pico USB host (via PIO-USB on GPIO 6/7, default)
 - Pico USB device → Host computer
+
+**Important:** Put 22Ω or 27Ω series resistors on the D+ and D− lines between the keyboard USB socket and GPIO 6/7. These are required for correct USB signal levels with PIO-USB.
 
 **NFC Reader (optional, requires `--nfc` build flag):**
 - PN532 SDA → GPIO 4
