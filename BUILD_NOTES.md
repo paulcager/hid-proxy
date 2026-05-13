@@ -36,18 +36,18 @@ make
 
 ### What Gets Included
 
-| Feature | Regular Pico | Pico W |
-|---------|-------------|--------|
-| USB HID proxy | ✅ | ✅ |
-| Text expansion/macros | ✅ | ✅ |
-| Encrypted flash storage | ✅ | ✅ |
-| Passphrase unlock | ✅ | ✅ |
-| NFC authentication | ✅ | ✅ |
-| Interactive macro define | ✅ | ✅ |
-| WiFi connectivity | ❌ | ✅ |
-| HTTP API (GET/POST macros) | ❌ | ✅ |
-| mDNS (hidproxy.local) | ❌ | ✅ |
-| Physical web unlock | ❌ | ✅ |
+| Feature                    | Regular Pico | Pico W |
+|----------------------------|--------------|--------|
+| USB HID proxy              | ✅            | ✅      |
+| Text expansion/macros      | ✅            | ✅      |
+| Encrypted flash storage    | ✅            | ✅      |
+| Passphrase unlock          | ✅            | ✅      |
+| NFC authentication         | ✅            | ✅      |
+| Interactive macro define   | ✅            | ✅      |
+| WiFi connectivity          | ❌            | ✅      |
+| HTTP API (GET/POST macros) | ❌            | ✅      |
+| mDNS (hidproxy.local)      | ❌            | ✅      |
+| Physical web unlock        | ❌            | ✅      |
 
 ### How It Works
 

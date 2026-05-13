@@ -345,7 +345,7 @@ If NFC is enabled but not working:
 If you see "Queue is full" errors:
 - You may be sending key definitions too fast
 - Try shorter expansions or slower typing
-- Known issue - see BUGS.md #13
+- Known issue - queue backpressure not implemented for passthrough mode
 
 ## Configuration
 
@@ -385,20 +385,9 @@ To change the amount of flash memory reserved for storing key definitions, you o
 
 ## Known Issues
 
-See **BUGS.md** for a comprehensive list of 34+ bugs including:
-- ~~Buffer overflows (#1, #2, #7, #14, #15)~~ - Partially fixed: Keydef size limits now enforced
-- Race conditions (#3, #12)
-- Memory safety issues (#5, #8-11)
-- ~~Weak encryption (#31, #32, #34)~~ - Improved: Now using AES-128-GCM with authentication (pico-kvstore/mbedtls)
-
-**Recent Improvements (November 2025):**
-- ✅ Migrated from custom flash storage to pico-kvstore with on-demand loading
-- ✅ Upgraded encryption: AES-128-GCM with authentication (mbedtls)
-- ✅ Password validation: SHA256 hash verification, rejects incorrect passwords
-- ✅ Public/private keydef support (public macros work when sealed)
-- ✅ Removed 10-second WiFi startup delay
-- ✅ Cleaned up deprecated code (kb.local_store removed)
-- See **KVSTORE_STATUS.md** for current status and **KVSTORE_MIGRATION.md** for migration details
+- Race conditions possible under heavy load
+- Queue backpressure not implemented for passthrough mode (see Queue Full Panic above)
+- Poor user interface with no visual status feedback for seal/unseal state
 
 ## ESP32-S3 Port (Experimental)
 
@@ -437,8 +426,6 @@ For detailed technical information, see:
 - **docs/BLE_UNLOCK.md** - BLE-based unlock design (not implemented, includes security analysis)
 - **docs/NFC_NDEF_SUPPORT.md** - Adding NDEF support for Android NFC compatibility (not implemented)
 - **KVSTORE_STATUS.md** - Current status, completed work, and remaining TODOs
-- **KVSTORE_MIGRATION.md** - Details of the pico-kvstore migration (completed November 2025)
 - **WIFI_SETUP.md** - WiFi and HTTP API configuration guide (Pico W only)
 - **MQTT_SETUP.md** - MQTT integration and Home Assistant setup (Pico W only)
-- **BUGS.md** - Comprehensive bug analysis
 

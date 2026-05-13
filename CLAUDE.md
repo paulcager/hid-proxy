@@ -454,7 +454,7 @@ The device supports multiple methods for unsealing (unlocking) encrypted key def
 
 ## Future Development
 
-See CONFIGURATION_OPTIONS.md for additional planned features:
+Planned and potential future features:
 - ~~Serial console for WiFi setup~~ ✅ **Implemented**: Interactive WiFi config via UART (both-shifts+F12)
 - ~~MQTT publishing of keystroke events to Home Assistant~~ ✅ **Implemented**: Seal/unseal events now published (see MQTT_SETUP.md)
 - ~~Password change support~~ ✅ **Implemented**: Full re-encryption with new password (both-shifts+INSERT)
