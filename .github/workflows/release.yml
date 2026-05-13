@@ -1,0 +1,28 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-reusable.yml
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download UF2
+        uses: actions/download-artifact@v4
+        with:
+          name: hid_proxy-pico_w
+
+      - name: Create release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: hid_proxy.uf2
+          generateReleaseNotes: true

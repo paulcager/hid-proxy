@@ -1,0 +1,75 @@
+name: Build (reusable)
+
+on:
+  workflow_call:
+    outputs:
+      artifact-name:
+        value: hid_proxy-pico_w
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install ARM toolchain
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: '13.3.Rel1'
+
+      - name: Cache Pico SDK
+        id: cache-sdk
+        uses: actions/cache@v4
+        with:
+          path: ~/pico-sdk
+          key: pico-sdk-2.2.0
+
+      - name: Clone Pico SDK
+        if: steps.cache-sdk.outputs.cache-hit != 'true'
+        run: |
+          git clone -b 2.2.0 --depth 1 https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
+          cd ~/pico-sdk && git submodule update --init --recursive
+
+      - name: Cache pioasm build
+        id: cache-pioasm
+        uses: actions/cache@v4
+        with:
+          path: ~/pico-tools/pioasm-build
+          key: pioasm-2.2.0
+
+      - name: Build pioasm
+        if: steps.cache-pioasm.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/pico-tools/pioasm-build
+          cd ~/pico-tools/pioasm-build
+          cmake -DPIOASM_VERSION_STRING=2.2.0 ~/pico-sdk/tools/pioasm
+          make -j$(nproc)
+
+      - name: Cache build directory (picotool etc)
+        uses: actions/cache@v4
+        with:
+          path: ~/build-cache
+          key: build-cache-pico-sdk-2.2.0-${{ runner.os }}
+
+      - name: Configure
+        run: |
+          mkdir -p build && cd build
+          cmake -DPICO_BOARD=pico_w \
+                -DPICO_SDK_PATH=$HOME/pico-sdk \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DUSB_HOST_DP_PIN=6 \
+                -DPIOASM_FETCH_FROM_GIT_PATH=$HOME/pico-tools \
+                -DPICOTOOL_FETCH_FROM_GIT_PATH=$HOME/build-cache \
+                ..
+
+      - name: Build
+        run: make -j$(nproc) -C build
+
+      - name: Upload UF2
+        uses: actions/upload-artifact@v4
+        with:
+          name: hid_proxy-pico_w
+          path: build/hid_proxy.uf2
