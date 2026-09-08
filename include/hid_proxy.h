@@ -173,8 +173,11 @@ extern void send_report_to_host(send_data_t to_send);
 
 extern void hex_dump(void const *p, size_t len);
 
-extern void lock();
-extern void unlock();
+/*! \brief Seal the device: clear encryption keys from memory */
+extern void seal(void);
+
+/*! \brief Unseal the device: mark keydefs accessible */
+extern void unseal(void);
 
 /*! \brief Add HID report to host output queue (with backpressure)
  *

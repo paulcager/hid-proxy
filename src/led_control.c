@@ -24,6 +24,13 @@ static uint32_t led_off_interval_ms = 0;    // How long LED stays off (ms)
 static bool boot_complete = false;          // Set to true after boot message is printed
 static queue_t *leds_queue_ptr = NULL;      // Queue to send LED updates to physical keyboard
 
+// One-shot flash pattern (overrides the steady-state intervals while running)
+static uint8_t pattern_blinks_left = 0;     // Remaining on/off blinks, 0 = no pattern
+static bool pattern_led_on = false;         // Current phase of the pattern
+static uint32_t pattern_on_ms = 0;          // On duration for each blink
+static uint32_t pattern_off_ms = 0;         // Off duration between blinks
+static absolute_time_t pattern_next_toggle; // When to switch pattern phase
+
 void led_set_queue(queue_t *queue) {
     leds_queue_ptr = queue;
 }
@@ -39,6 +46,22 @@ void led_boot_complete(void) {
 void led_set_intervals(uint32_t on_ms, uint32_t off_ms) {
     led_on_interval_ms = on_ms;
     led_off_interval_ms = off_ms;
+}
+
+void led_flash_pattern(uint32_t on_ms, uint32_t off_ms, uint8_t count) {
+    if (count == 0) {
+        pattern_blinks_left = 0;
+        return;
+    }
+
+    pattern_on_ms = on_ms;
+    pattern_off_ms = off_ms;
+    pattern_blinks_left = count;
+
+    // Start on the "on" phase immediately so the pattern is visible even if
+    // the caller sets a steady state of "off" straight afterwards.
+    pattern_led_on = true;
+    pattern_next_toggle = make_timeout_time_ms(on_ms);
 }
 
 uint8_t led_get_state(void) {
@@ -70,6 +93,33 @@ void update_status_led(void) {
 
     // Compute our desired NUM_LOCK state (bit 0)
     bool numlock_on;
+    if (pattern_blinks_left > 0) {
+        // A one-shot pattern is running - it takes priority over the steady state
+        if (time_reached(pattern_next_toggle)) {
+            if (pattern_led_on) {
+                // End of an "on" phase - go dark for off_ms
+                pattern_led_on = false;
+                pattern_next_toggle = make_timeout_time_ms(pattern_off_ms);
+            } else {
+                // End of an "off" phase - one full blink done
+                pattern_blinks_left--;
+                if (pattern_blinks_left > 0) {
+                    pattern_led_on = true;
+                    pattern_next_toggle = make_timeout_time_ms(pattern_on_ms);
+                }
+            }
+        }
+
+        if (pattern_blinks_left > 0) {
+            numlock_on = pattern_led_on;
+            goto apply_state;
+        }
+
+        // Pattern just finished - fall through to the steady state, and start
+        // its cycle cleanly rather than honouring a stale toggle deadline.
+        next_led_toggle = get_absolute_time();
+    }
+
     if (led_on_interval_ms == 0 && led_off_interval_ms == 0) {
         // LED off (locked/blank state)
         numlock_on = false;
@@ -85,6 +135,7 @@ void update_status_led(void) {
         numlock_on = (current_led_state & 0x01) != 0;
     }
 
+apply_state:
     // Merge: Take host's CAPS_LOCK/SCROLL_LOCK (bits 1,2) + our NUM_LOCK (bit 0)
     // LED bits: 0=NUM_LOCK, 1=CAPS_LOCK, 2=SCROLL_LOCK, 3=COMPOSE, 4=KANA
     current_led_state = (host_led_state & 0xFE) | (numlock_on ? 0x01 : 0x00);

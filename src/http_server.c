@@ -1,6 +1,7 @@
 #include "http_server.h"
 #include "wifi_config.h"
 #include "hid_proxy.h"
+#include "led_control.h"
 #include "macros.h"
 #include "keydef_store.h"
 #include "encryption.h"
@@ -161,10 +162,12 @@ void httpd_post_finished(void *connection, char *response_uri, u16_t response_ur
         if (success) {
             // Update device status
             unseal();
+            led_flash_pattern(600, 200, 2);   // Two long blinks = success
             LOG_INFO("Device unsealed via HTTP\n");
             snprintf(response_uri, response_uri_len, "/unseal_success.json");
         } else {
             LOG_INFO("Unseal failed - incorrect password\n");
+            led_flash_pattern(100, 100, 6);   // Short angry burst = failure
             snprintf(response_uri, response_uri_len, "/unseal_failed.json");
         }
 

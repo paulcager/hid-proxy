@@ -9,3 +9,4 @@ build-test/
 .env
 macros.txt
 CMakeUserPresets.json
+minicom.log

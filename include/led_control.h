@@ -74,6 +74,23 @@ void led_boot_complete(void);
 void led_set_intervals(uint32_t on_ms, uint32_t off_ms);
 
 /**
+ * @brief Play a one-shot flash pattern, then return to the steady state
+ *
+ * Overrides the intervals set by led_set_intervals() for the duration of the
+ * pattern. Once the pattern completes, the LED falls back to whatever the
+ * current led_set_intervals() values are, so callers can set the final steady
+ * state before or after starting the pattern.
+ *
+ * Calling this while a pattern is running replaces it. Passing count == 0
+ * cancels any running pattern.
+ *
+ * @param on_ms  How long the LED stays on in each blink (milliseconds)
+ * @param off_ms How long the LED stays off between blinks (milliseconds)
+ * @param count  Number of on/off blinks to play
+ */
+void led_flash_pattern(uint32_t on_ms, uint32_t off_ms, uint8_t count);
+
+/**
  * @brief Get current LED state
  *
  * @return Current LED state byte (bit 0 = NumLock)

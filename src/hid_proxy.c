@@ -267,7 +267,7 @@ static void peripheral_init(void) {
  *
  * Handles:
  * - USB device tasks (keyboard/mouse HID)
- * - Status message printing (after 5 seconds)
+ * - Status message printing (after 2 seconds)
  * - LED updates
  * - Network tasks (WiFi, HTTP, MQTT)
  * - NFC authentication
@@ -286,8 +286,8 @@ static void main_loop(void) {
 #endif
 
     while (true) {
-        // Print comprehensive status message after 5 seconds (when USB CDC is ready)
-        if (!status_message_printed && absolute_time_diff_us(start_time, get_absolute_time()) > 5000000) {
+        // Print comprehensive status message after 2 seconds (when USB CDC is ready)
+        if (!status_message_printed && absolute_time_diff_us(start_time, get_absolute_time()) > 2000000) {
             status_message_printed = true;
 
             // Count keydefs
@@ -335,7 +335,7 @@ static void main_loop(void) {
                 printf("WiFi: Not connected\n");
             }
 #endif
-            printf("Uptime: 5 seconds\n");
+            printf("Uptime: 2 seconds\n");
             printf("====================================\n");
             printf("\n");
 
@@ -606,7 +606,7 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_t
     return 0;
 }
 
-void seal() {
+void seal(void) {
     kb.status = sealed;
     led_set_intervals(0, 0);   // LED off when sealed
     kvstore_clear_encryption_key();  // Clear encryption key from memory
@@ -618,7 +618,7 @@ void seal() {
 #endif
 }
 
-void unseal() {
+void unseal(void) {
     kb.status = unsealed;
     led_set_intervals(100, 2400);    // Slow pulse when unsealed
 

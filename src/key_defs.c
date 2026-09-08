@@ -165,10 +165,12 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     printf("Incorrect password\n");
                     kb.status = sealed;
                     led_set_intervals(0, 0);   // LED off when sealed
+                    led_flash_pattern(100, 100, 6);   // Short angry burst = failure
                     enc_clear_key();
                 } else if (kb.status == entering_password) {
                     // Unlocking - no need to re-save anything
                     unseal();
+                    led_flash_pattern(600, 200, 2);   // Two long blinks = success
                     printf("Unsealed\n");
                 } else {
                     // Changing password while unsealed
@@ -176,10 +178,12 @@ void handle_keyboard_report(hid_keyboard_report_t *kb_report) {
                     if (kvstore_change_password(key)) {
                         printf("Password changed successfully - all data re-encrypted\n");
                         unseal();
+                        led_flash_pattern(600, 200, 2);   // Two long blinks = success
                     } else {
                         printf("Password change failed\n");
                         kb.status = sealed;
                         led_set_intervals(0, 0);   // LED off when sealed
+                        led_flash_pattern(100, 100, 6);   // Short angry burst = failure
                         enc_clear_key();
                     }
                 }
