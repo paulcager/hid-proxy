@@ -12,10 +12,13 @@
 #include <string.h>
 #include <ctype.h>
 
-#define MAX_INPUT_LEN 64
-
-static char input_buffer[MAX_INPUT_LEN];
-static int input_pos = 0;
+// Copy a string into a fixed-size field, truncating if needed and always
+// leaving the result NUL-terminated.
+static void copy_field(char *dest, size_t dest_size, const char *src) {
+    size_t len = strnlen(src, dest_size - 1);
+    memcpy(dest, src, len);
+    dest[len] = '\0';
+}
 
 // Read a line from stdin (UART) with timeout
 static bool read_line_with_timeout(char *buffer, size_t max_len, uint32_t timeout_ms) {
@@ -158,9 +161,9 @@ void wifi_console_setup(void) {
 
     // Save configuration
     memset(&config, 0, sizeof(config));
-    strncpy(config.ssid, ssid, sizeof(config.ssid) - 1);
-    strncpy(config.password, password, sizeof(config.password) - 1);
-    strncpy(config.country, country, sizeof(config.country) - 1);
+    copy_field(config.ssid, sizeof(config.ssid), ssid);
+    copy_field(config.password, sizeof(config.password), password);
+    copy_field(config.country, sizeof(config.country), country);
     config.enable_wifi = true;
 
     wifi_config_save(&config);

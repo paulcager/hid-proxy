@@ -18,6 +18,14 @@
 #define WIFI_COUNTRY_KEY "wifi.country"
 #define WIFI_ENABLED_KEY "wifi.enabled"
 
+// Copy a string into a fixed-size field, truncating if needed and always
+// leaving the result NUL-terminated.
+static void copy_field(char *dest, size_t dest_size, const char *src) {
+    size_t len = strnlen(src, dest_size - 1);
+    memcpy(dest, src, len);
+    dest[len] = '\0';
+}
+
 web_state_t web_state = {
     .web_access_enabled = false,
     .web_access_expires = 0
@@ -43,12 +51,12 @@ void wifi_config_init(void) {
 
         // Save build-time values to kvstore
         memset(&current_config, 0, sizeof(current_config));
-        strncpy(current_config.ssid, WIFI_SSID, sizeof(current_config.ssid) - 1);
-        strncpy(current_config.password, WIFI_PASSWORD, sizeof(current_config.password) - 1);
+        copy_field(current_config.ssid, sizeof(current_config.ssid), WIFI_SSID);
+        copy_field(current_config.password, sizeof(current_config.password), WIFI_PASSWORD);
         #ifdef WIFI_COUNTRY_CODE
-        strncpy(current_config.country, WIFI_COUNTRY_CODE, sizeof(current_config.country) - 1);
+        copy_field(current_config.country, sizeof(current_config.country), WIFI_COUNTRY_CODE);
         #else
-        strncpy(current_config.country, "UK", sizeof(current_config.country) - 1);
+        copy_field(current_config.country, sizeof(current_config.country), "UK");
         #endif
         current_config.enable_wifi = true;
 
@@ -107,7 +115,7 @@ void wifi_config_load(wifi_config_t *config) {
     ret = kvstore_get_value(WIFI_COUNTRY_KEY, config->country, sizeof(config->country), &size, NULL);
     if (ret != 0) {
         // Default to US
-        strncpy(config->country, "UK", sizeof(config->country) - 1);
+        copy_field(config->country, sizeof(config->country), "UK");
     } else {
         // Ensure null-terminated
         config->country[sizeof(config->country) - 1] = '\0';

@@ -266,11 +266,18 @@ static bool add_mqtt_action(keydef_t* current_def, const char* topic, const char
     if ((void*)&current_def->actions[current_def->count + 1] >= limit) {
         return false;
     }
-    current_def->actions[current_def->count].type = ACTION_MQTT_PUBLISH;
-    strncpy(current_def->actions[current_def->count].data.mqtt.topic, topic, 63);
-    current_def->actions[current_def->count].data.mqtt.topic[63] = '\0';
-    strncpy(current_def->actions[current_def->count].data.mqtt.message, message, 63);
-    current_def->actions[current_def->count].data.mqtt.message[63] = '\0';
+    action_t *action = &current_def->actions[current_def->count];
+    action->type = ACTION_MQTT_PUBLISH;
+
+    // Longer topics/messages are silently truncated to fit the fixed-size fields
+    size_t topic_len = strnlen(topic, sizeof(action->data.mqtt.topic) - 1);
+    memcpy(action->data.mqtt.topic, topic, topic_len);
+    action->data.mqtt.topic[topic_len] = '\0';
+
+    size_t message_len = strnlen(message, sizeof(action->data.mqtt.message) - 1);
+    memcpy(action->data.mqtt.message, message, message_len);
+    action->data.mqtt.message[message_len] = '\0';
+
     current_def->count++;
     return true;
 }
